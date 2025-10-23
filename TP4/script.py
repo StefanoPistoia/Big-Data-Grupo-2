@@ -126,47 +126,33 @@ result = logit_model.fit()
 # 3. Resumen del modelo
 print(result.summary())
 
-import numpy as np
-import pandas as pd
-from docx import Document
-import statsmodels.api as sm
-
-# Ajustás tu modelo
-logit_model = sm.Logit(y_train, X_train_const)
-result = logit_model.fit()
-
-# Extraer resumen de resultados
+# Extraer resultados
 coef = result.params
 se = result.bse
 z = result.tvalues
 p = result.pvalues
 conf = result.conf_int()
-conf.columns = ['2.5%', '97.5%']
+conf.columns = ['IC 2.5%', 'IC 97.5%']
 
-# Crear DataFrame con todo
+# Crear DataFrame
 tabla_resultados = pd.DataFrame({
-    'Coef. (β)': coef,
-    'Error Std.': se,
-    'z': z,
-    'p-value': p,
-    'IC 2.5%': conf['2.5%'],
-    'IC 97.5%': conf['97.5%'],
+    'Variable': coef.index,
+    'Coef. (β)': coef.values,
+    'exp(β)': np.exp(coef.values),
+    'Error Std.': se.values,
+    'z': z.values,
+    'p-value': p.values,
+    'IC 2.5%': conf['IC 2.5%'].values,
+    'IC 97.5%': conf['IC 97.5%'].values
 })
 
-# Añadir columna con Odds Ratio
-tabla_resultados['exp(β)'] = np.exp(tabla_resultados['Coef. (β)'])
-
-# Reordenar columnas
-tabla_resultados = tabla_resultados[['Coef. (β)', 'exp(β)', 'Error Std.', 'z', 'p-value', 'IC 2.5%', 'IC 97.5%']]
-
-# Redondear para prolijidad
 tabla_resultados = tabla_resultados.round(4)
 
 # --- Exportar a Word ---
 doc = Document()
 doc.add_heading('Resultados del modelo Logit', level=1)
 
-# Añadir tabla al documento
+# Crear tabla
 t = doc.add_table(rows=1, cols=len(tabla_resultados.columns))
 t.style = 'Light List Accent 1'
 
@@ -175,17 +161,21 @@ hdr_cells = t.rows[0].cells
 for i, col in enumerate(tabla_resultados.columns):
     hdr_cells[i].text = col
 
-# Filas
-for i, row in tabla_resultados.iterrows():
+# Filas (con negrita si p < 0.05)
+for _, row in tabla_resultados.iterrows():
     row_cells = t.add_row().cells
     for j, val in enumerate(row):
-        row_cells[j].text = str(val)
+        cell = row_cells[j].paragraphs[0].add_run(str(val))
+        if j == 0 or tabla_resultados.loc[_, 'p-value'] < 0.05:
+            # Si es nombre de variable o p < 0.05 => negrita
+            cell.bold = True
+
+# Ajustar tamaño de fuente
+for row in t.rows:
+    for cell in row.cells:
+        for paragraph in cell.paragraphs:
+            for run in paragraph.runs:
+                run.font.size = Pt(10)
 
 # Guardar documento
 doc.save('Resultados_Logit.docx')
-
-print("✅ Tabla exportada a 'Resultados_Logit.docx'")
-
-
-
-#añadir una columna que muestre los logs odds
