@@ -10,6 +10,13 @@ from sklearn.model_selection import train_test_split
 from scipy import stats
 from docx import Document
 import statsmodels.api as sm
+import numpy as np
+from docx.shared import Pt
+from docx.oxml.ns import qn
+from docx.oxml import OxmlElement
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import accuracy_score, classification_report
 
 # Cargar el archivo Excel en un DataFrame de pandas
 df = pd.read_excel("db_nea_respuestas.xlsx")
@@ -40,7 +47,7 @@ train_2025, test_2025 = train_test_split(
 
 # Definimos variables
 Y = 'pobre'
-X = ['horastrab','educ','edad','edad2','adulto_equiv']
+X = ['horastrab','educ','edad','edad2','cobertura_medica','sexo','ESTADO','estado_civil']
 
 # --- Tabla de diferencia de medias con p-values entre train y test para cada año ---
 
@@ -112,12 +119,17 @@ df_medias_pvalues.to_excel("diferencia_medias_train_test.xlsx", index=False)
 
 # --- Regresión logística ---
 train_2025_full = train_2025[[Y] + X].dropna()
+
 # 1. Preparar los datos de entrenamiento para el modelo
 y_train = train_2025_full[Y]
 X_train = train_2025_full[X]
 
-# Statsmodels requiere que se añada una constante (intercepto) manualmente
-X_train_const = sm.add_constant(X_train)
+# Convertir variables categóricas en dummies
+categorical_vars = ['cobertura_medica', 'sexo', 'ESTADO', 'estado_civil']
+X_train_dummies = pd.get_dummies(X_train, columns=categorical_vars, drop_first=True, dtype=float)
+
+# Statsmodels requiere que se añada una constante manualmente
+X_train_const = sm.add_constant(X_train_dummies)
 
 # 2. Instanciar y entrenar el modelo Logit
 logit_model = sm.Logit(y_train, X_train_const)
@@ -179,3 +191,138 @@ for row in t.rows:
 
 # Guardar documento
 doc.save('Resultados_Logit.docx')
+
+import matplotlib.pyplot as plt
+
+
+
+# 1. Crear rango de valores para 'educ'
+educ_range = np.linspace(X_train_const['educ'].min(), X_train_const['educ'].max(), 100)
+
+# 2. Crear un DataFrame con 'educ' variable y los demás fijos en su media
+X_pred = X_train_const.copy()
+for col in X_pred.columns:
+    if col != 'educ':
+        X_pred[col] = X_pred[col].mean()
+
+# Reemplazamos 'educ' por el rango deseado
+X_pred = X_pred.loc[X_pred.index.repeat(len(educ_range))].reset_index(drop=True)
+X_pred['educ'] = np.tile(educ_range, len(X_train_const))
+
+# 3. Predecir probabilidades
+pred_probs = result.predict(X_pred)
+
+# 4. Graficar relación entre educación y probabilidad predicha
+plt.figure(figsize=(8, 5))
+plt.plot(educ_range, pred_probs.groupby(X_pred['educ']).mean(), color='darkblue', linewidth=2)
+plt.title('Probabilidad predicha de ser pobre según nivel educativo', fontsize=13)
+plt.xlabel('Años de educación', fontsize=12)
+plt.ylabel('Probabilidad predicha de ser pobre', fontsize=12)
+plt.grid(alpha=0.3)
+plt.ylim(0, 1)
+plt.show()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# --- Clasificación con K-Nearest Neighbors (KNN) ---
+
+# Usamos las mismas variables X e Y que en la regresión logística
+train_df_knn = train_2025[[Y] + X].dropna()
+test_df_knn = test_2025[[Y] + X].dropna()
+
+y_train_knn = train_df_knn[Y]
+X_train_knn = train_df_knn[X]
+
+y_test_knn = test_df_knn[Y]
+X_test_knn = test_df_knn[X]
+
+# Convertir variables categóricas en dummies
+X_train_knn_dummies = pd.get_dummies(X_train_knn, columns=categorical_vars, drop_first=True, dtype=float)
+X_test_knn_dummies = pd.get_dummies(X_test_knn, columns=categorical_vars, drop_first=True, dtype=float)
+
+# Alinear columnas para asegurar que train y test tengan las mismas 
+X_train_aligned, X_test_aligned = X_train_knn_dummies.align(X_test_knn_dummies, join='inner', axis=1, fill_value=0)
+
+# 2. Escalar las características
+# KNN es sensible a la escala de los datos, por lo que estandarizamos las variables.
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train_aligned)
+X_test_scaled = scaler.transform(X_test_aligned)
+
+# 3. Iterar sobre los valores de K, entrenar y evaluar el modelo
+k_values = [1, 5, 10]
+
+for k in k_values:
+    print(f"\n--- Resultados para K = {k} ---")
+    
+    # Instanciar el modelo
+    knn = KNeighborsClassifier(n_neighbors=k)
+    
+    # Entrenar el modelo
+    knn.fit(X_train_scaled, y_train_knn)
+    
+    # Predecir en el conjunto de prueba
+    y_pred_knn = knn.predict(X_test_scaled)
+    
+    # Evaluar el modelo
+    accuracy = accuracy_score(y_test_knn, y_pred_knn)
+    print(f"Accuracy: {accuracy:.4f}")
+    print("Reporte de Clasificación:")
+    print(classification_report(y_test_knn, y_pred_knn, target_names=['No Pobre (0)', 'Pobre (1)']))
+    
+# --- Búsqueda del K Óptimo con Cross-Validation (KNN con K-CV) ---
+
+from sklearn.model_selection import cross_val_score
+
+print("\n--- Buscando el K óptimo para KNN con Cross-Validation (5-fold) ---")
+
+# 1. Definir el rango de valores de K para probar
+k_range = range(1, 11)
+cv_scores = []
+
+# 2. Realizar validación cruzada de 5 folds para cada valor de K
+print("Calculando el accuracy promedio para cada K...")
+for k in k_range:
+    knn_cv = KNeighborsClassifier(n_neighbors=k)
+    # cross_val_score divide los datos, entrena y evalúa automáticamente
+    # Usamos X_train_scaled y y_train_knn, que son nuestros datos de entrenamiento
+    scores = cross_val_score(knn_cv, X_train_scaled, y_train_knn, cv=5, scoring='accuracy')
+    cv_scores.append(scores.mean())
+
+# 3. Encontrar el K óptimo
+optimal_k = k_range[np.argmax(cv_scores)]
+max_accuracy = max(cv_scores)
+
+
+# 4. Graficar los resultados
+plt.figure(figsize=(10, 6))
+plt.plot(k_range, cv_scores, marker='o', linestyle='--', color='b', label='Accuracy de CV')
+plt.axvline(optimal_k, color='r', linestyle='-', label=f'K Óptimo = {optimal_k}')
+plt.title('Accuracy de KNN vs. Número de Vecinos (K) - Cross-Validation', fontsize=14)
+plt.xlabel('Número de Vecinos (K)', fontsize=12)
+plt.ylabel('Accuracy Promedio (5-Fold CV)', fontsize=12)
+plt.xticks(k_range)
+plt.legend()
+plt.grid(True)
+plt.show()
+
+# 5. Comentario sobre el resultado
+print("\n--- Comentario sobre el K Óptimo ---")
+print(f"El gráfico muestra el rendimiento del modelo para diferentes valores de K. Un K bajo (como 1) puede llevar a un sobreajuste, ya que el modelo es muy sensible a puntos individuales y ruido. A medida que K aumenta, el modelo se generaliza mejor, y el accuracy tiende a subir.")
+print(f"En este caso, el accuracy más alto se alcanza con K={optimal_k}. A partir de este punto, aumentar K podría hacer que el modelo sea demasiado simple (underfitting), perdiendo detalles importantes y disminuyendo su rendimiento.")
+print(f"Por lo tanto, {optimal_k} es el número óptimo de vecinos cercanos para este problema, ya que representa el mejor balance entre sesgo y varianza según la validación cruzada.")
+
+    
