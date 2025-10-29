@@ -1,4 +1,3 @@
-import pyreadstat
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
@@ -6,6 +5,9 @@ import matplotlib.pyplot as plt
 df = pd.read_parquet("PISA_LATAM.parquet")
 df = df.reset_index()
 
+#modificar ISCEDP
+predictores_dummies = ['TARDYSD','IMMIG']
+afuera = ['COBN_S','COBN_M','COBN_F','LANGN',]
 
 #Definir la función para calcular los estadísticos por país
 def calcular_estadisticas_pisa(datos_pais):
@@ -80,6 +82,30 @@ print("Primeas 5 filas con el puntaje de matemática por estudiante:")
 print(df[['CNT', 'puntaje_matematica']].head())
 
 
+#%% Calculo de puntaje de LENGUA por estudiante
+
+# 1. Definir las columnas de valores plausibles para lectura
+read_pv_cols = [f'PV{i}READ' for i in range(1, 11)]
+
+# 2. Calcular el puntaje promedio por estudiante
+df['puntaje_lengua'] = df[read_pv_cols].mean(axis=1)
+
+# 3. Mostrar las primeras filas con la nueva columna
+print("\nPrimeras 5 filas con el puntaje de lengua por estudiante:")
+print(df[['CNT', 'puntaje_lengua']].head())
+
+#%% Calculo de puntaje de CIENCIAS por estudiante
+
+# 1. Definir las columnas de valores plausibles para ciencias
+scie_pv_cols = [f'PV{i}SCIE' for i in range(1, 11)]
+
+# 2. Calcular el puntaje promedio por estudiante
+df['puntaje_ciencias'] = df[scie_pv_cols].mean(axis=1)
+
+# 3. Mostrar las primeras filas con la nueva columna
+print("\nPrimeras 5 filas con el puntaje de ciencias por estudiante:")
+print(df[['CNT', 'puntaje_ciencias', 'puntaje_lengua', 'puntaje_matematica']].head())
+
 #%% Modelo de Regresión OLS con errores clusterizados
 
 import statsmodels.api as sm
@@ -106,7 +132,7 @@ print("="*80)
 
 # Lista de variables predictoras que seleccionaste
 predictores = [
-    'AGE', 'GRADE', 'ISCEDP', 'IMMIG', 'COBN_S', 'COBN_M', 'COBN_F', 'LANGN', 
+    'GENDER','AGE', 'GRADE', 'ISCEDP', 'IMMIG', 'COBN_S', 'COBN_M', 'COBN_F', 'LANGN', 
     'REPEAT', 'MISSSC', 'SKIPPING', 'TARDYSD', 'EXERPRAC', 'STUDYHMW', 
     'WORKPAY', 'WORKHOME', 'EXPECEDU', 'MATHPREF', 'MATHEASE', 'MATHMOT', 
     'DURECEC', 'BSMJ', 'SISCO', 'RELATST', 'BELONG', 'BULLIED', 'FEELSAFE', 
@@ -126,9 +152,14 @@ predictores = [
     'PARINVOL', 'PQSCHOOL', 'PASCHPOL', 'ATTIMMP', 'PAREXPT', 'CREATHME', 
     'CREATACT', 'CREATOPN', 'CREATOR'
 ]
+# Lista de variables a excluir explícitamente
+afuera = ['COBN_S', 'COBN_M', 'COBN_F', 'LANGN']
+
+# Lista de variables a forzar como dummies
+predictores_dummies = ['TARDYSD', 'IMMIG']
 
 # Filtrar la lista de predictores para excluir las columnas con muchos faltantes
-predictores_filtrados = [p for p in predictores if p not in columnas_a_eliminar] 
+predictores_filtrados = [p for p in predictores if p not in columnas_a_eliminar and p not in afuera]
 
 
 # Variable dependiente
@@ -150,7 +181,7 @@ for col in predictores_filtrados:
     
     # Si es numérica pero tiene pocos valores únicos (sugiere que es categórica codificada)
     # la marcamos para convertir a dummy. Un umbral de 20 valores únicos es una heurística común.
-    if df_modelo_temp[col].nunique() < 20 and df_modelo_temp[col].dtype != 'float64':
+    if col in predictores_dummies:
         categorical_cols_to_dummify.append(col)
     else:
         numeric_cols_for_model.append(col)
