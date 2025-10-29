@@ -274,6 +274,22 @@ plt.tight_layout()
 plt.show()
 
 
+#%% Calculo de puntaje de matemática por estudiante
+
+# 1. Definir las columnas de valores plausibles para matemáticas
+math_pv_cols = [f'PV{i}MATH' for i in range(1, 11)]
+
+# 2. Calcular el puntaje promedio por estudiante
+# El puntaje de cada estudiante es el promedio de sus 10 valores plausibles.
+df['puntaje_matematica'] = df[math_pv_cols].mean(axis=1)
+
+# 3. Mostrar las primeras filas con la nueva columna
+print("Primeas 5 filas con el puntaje de matemática por estudiante:")
+print(df[['CNT', 'puntaje_matematica']].head())
+
+
+
+
 #calculo de puntaje mate por pais 
 import numpy as np
 
@@ -570,3 +586,67 @@ print(f"📍 Países mapeados exitosamente: {len(latam_data)}/{len(resultados_po
 if len(latam_data) < len(resultados_por_pais):
     faltantes = set(resultados_por_pais['CNT']) - set(latam_data['CNT'])
     print(f"⚠️  Países no encontrados en el GeoJSON: {', '.join(sorted(faltantes))}")
+
+
+#%% Modelo de Regresión OLS con errores clusterizados
+
+import statsmodels.api as sm
+
+# 1. Definir las variables predictoras (X) y la variable dependiente (y)
+
+# Lista de variables predictoras que seleccionaste
+predictores = [
+    'AGE', 'GRADE', 'ISCEDP', 'IMMIG', 'COBN_S', 'COBN_M', 'COBN_F', 'LANGN', 
+    'REPEAT', 'MISSSC', 'SKIPPING', 'TARDYSD', 'EXERPRAC', 'STUDYHMW', 
+    'WORKPAY', 'WORKHOME', 'EXPECEDU', 'MATHPREF', 'MATHEASE', 'MATHMOT', 
+    'DURECEC', 'BSMJ', 'SISCO', 'RELATST', 'BELONG', 'BULLIED', 'FEELSAFE', 
+    'SCHRISK', 'PERSEVAGR', 'CURIOAGR', 'COOPAGR', 'EMPATAGR', 'ASSERAGR', 
+    'STRESAGR', 'EMOCOAGR', 'GROSAGR', 'INFOSEEK', 'FAMSUP', 'DISCLIM', 
+    'TEACHSUP', 'COGACRCO', 'COGACMCO', 'EXPOFA', 'EXPO21ST', 'MATHEFF', 
+    'MATHEF21', 'FAMCON', 'ANXMAT', 'MATHPERS', 'CREATEFF', 'CREATSCH', 
+    'CREATFAM', 'CREATAS', 'CREATOOS', 'CREATOP', 'OPENART', 'IMAGINE', 
+    'SCHSUST', 'LEARRES', 'PROBSELF', 'FAMSUPSL', 'FEELLAH', 'SDLEFF', 
+    'MISCED', 'FISCED', 'HISCED', 'PAREDINT', 'BMMJ1', 'BFMJ2', 'HISEI', 
+    'ICTRES', 'HOMEPOS', 'ESCS', 'FCFMLRTY', 'FLSCHOOL', 'FLMULTSB', 
+    'FLFAMILY', 'ACCESSFP', 'FLCONFIN', 'FLCONICT', 'ACCESSFA', 'ATTCONFM', 
+    'FRINFLFM', 'ICTSCH', 'ICTAVSCH', 'ICTHOME', 'ICTAVHOM', 'ICTQUAL', 
+    'ICTSUBJ', 'ICTENQ', 'ICTFEED', 'ICTOUT', 'ICTWKDY', 'ICTWKEND', 'ICTREG', 
+    'ICTINFO', 'ICTDISTR', 'ICTEFFIC', 'STUBMI', 'BODYIMA', 'SOCONPA', 
+    'LIFESAT', 'PSYCHSYM', 'SOCCON', 'EXPWB', 'CURSUPP', 'PQMIMP', 'PQMCAR', 
+    'PARINVOL', 'PQSCHOOL', 'PASCHPOL', 'ATTIMMP', 'PAREXPT', 'CREATHME', 
+    'CREATACT', 'CREATOPN', 'CREATOR'
+]
+
+# Variable dependiente
+variable_y = 'puntaje_matematica'
+
+# 2. Preparar los datos
+
+# Crear un nuevo DataFrame con solo las columnas necesarias para el modelo
+# y la variable de clusterización 'CNT'.
+columnas_modelo = predictores + [variable_y, 'CNT']
+df_modelo = df[columnas_modelo].copy()
+
+# Eliminar filas con datos faltantes en cualquiera de las columnas seleccionadas
+df_modelo.dropna(inplace=True)
+
+print(f"\nSe usarán {len(df_modelo)} observaciones completas para el modelo de regresión.")
+
+# Definir X e y
+y = df_modelo[variable_y]
+X = df_modelo[predictores]
+
+# Agregar una constante (intercepto) al modelo
+X = sm.add_constant(X)
+
+# 3. Ajustar el modelo OLS con errores estándar clusterizados por país
+
+modelo_ols = sm.OLS(y, X)
+resultados = modelo_ols.fit(cov_type='cluster', cov_kwds={'groups': df_modelo['CNT']})
+
+# 4. Mostrar el resumen de los resultados del modelo
+print("\n" + "="*80)
+print("📊 RESULTADOS DEL MODELO DE REGRESIÓN OLS (ERRORES CLUSTERIZADOS POR PAÍS)")
+print("="*80)
+print(resultados.summary())
+print("="*80)
