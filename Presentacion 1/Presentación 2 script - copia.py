@@ -145,27 +145,23 @@ predictores = [
     'ICTINFO', 'ICTDISTR', 'ICTEFFIC', 'STUBMI', 'BODYIMA', 'SOCONPA', 
     'LIFESAT', 'PSYCHSYM', 'SOCCON', 'EXPWB', 'CURSUPP', 'PQMIMP', 'PQMCAR', 
     'PARINVOL', 'PQSCHOOL', 'PASCHPOL', 'ATTIMMP', 'PAREXPT', 'CREATHME', 
-    'CREATACT', 'CREATOPN', 'CREATOR','CNT'
-] # 'CNT' se elimina de esta lista para ser manejada por separado.
+    'CREATACT', 'CREATOPN', 'CREATOR'
+]
 # Lista de variables a excluir explícitamente
 afuera = ['COBN_S', 'COBN_M', 'COBN_F', 'LANGN']
 
 # Lista de variables a forzar como dummies
-predictores_dummies = ['TARDYSD', 'IMMIG', 'ST004D01T'] # 'CNT' se manejará por separado
+predictores_dummies = ['TARDYSD', 'IMMIG','ST004D01T']
 
 # Filtrar la lista de predictores para excluir las columnas con muchos faltantes
-predictores_filtrados = [p for p in predictores if p not in columnas_a_eliminar and p not in afuera and p != 'CNT']
-# Separar las columnas numéricas de las que serán dummies
+predictores_filtrados = [p for p in predictores if p not in columnas_a_eliminar and p not in afuera]
+
 # Definir las materias para el bucle
 materias = {
     'Matemática': 'puntaje_matematica',
     'Lengua': 'puntaje_lengua',
     'Ciencias': 'puntaje_ciencias'
 }
-
-# Crear un ExcelWriter para guardar los resultados
-output_excel_path = 'resultados_regresion_pisa.xlsx'
-writer = pd.ExcelWriter(output_excel_path, engine='xlsxwriter')
 
 for nombre_materia, variable_y in materias.items():
     print("\n" + "="*80)
@@ -174,92 +170,55 @@ for nombre_materia, variable_y in materias.items():
 
     # 2. Preparar los datos para la materia actual
     # Crear un nuevo DataFrame con solo las columnas necesarias para el modelo
-    # Se añade 'CNT' explícitamente para los efectos fijos de país.
-    columnas_necesarias = predictores_filtrados + [variable_y, 'CNT']
-    df_modelo_temp = df[columnas_necesarias].copy()
+    # y la variable de clusterización 'CNT'. Se usa una copia para no modificar el df original.
+    df_modelo_temp = df[predictores_filtrados + [variable_y, 'CNT']].copy()
 
     # --- Manejo de tipos de datos: Convertir 'object' a numérico o a dummy variables ---
     numeric_cols_for_model = []
     categorical_cols_to_dummify = []
 
-    # Bucle para procesar solo las variables predictoras, excluyendo 'CNT'
     for col in predictores_filtrados:
-        try:
-            # Intentar convertir a numérico. Si hay errores, se convierten a NaN.
-            df_modelo_temp[col] = pd.to_numeric(df_modelo_temp[col], errors='coerce')
-            
-            # Si la columna está en la lista de dummies, se añade a la lista para procesar.
-            if col in predictores_dummies:
-                categorical_cols_to_dummify.append(col)
-            else:
-                numeric_cols_for_model.append(col)
-        except Exception as e:
-            print(f"❌ Error al procesar columna {col}: {e}")
+        # Intentar convertir a numérico. Si hay errores, se convierten a NaN.
+        df_modelo_temp[col] = pd.to_numeric(df_modelo_temp[col], errors='coerce')
+        
+        # Si es numérica pero tiene pocos valores únicos (sugiere que es categórica codificada)
+        # la marcamos para convertir a dummy.
+        if col in predictores_dummies:
+            categorical_cols_to_dummify.append(col)
+        else:
+            numeric_cols_for_model.append(col)
 
-    # --- Creación de Dummies ---
-    # 1. Dummies para los países (variable de texto)
-    df_dummies_country = pd.get_dummies(df_modelo_temp[['CNT']], columns=['CNT'], drop_first=True, dummy_na=False).astype(int)
-    
-    # 2. Dummies para las otras variables categóricas (que ahora son numéricas)
-    df_dummies_temp_other = df_modelo_temp[categorical_cols_to_dummify].astype('Int64')
-    df_dummies_other = pd.get_dummies(df_dummies_temp_other.astype(str), columns=categorical_cols_to_dummify, drop_first=True, dummy_na=False).astype(int)
+    # Convertir las columnas categóricas identificadas a variables dummy
+    if categorical_cols_to_dummify:
+        print(f"\nℹ️  Convirtiendo {len(categorical_cols_to_dummify)} variables a formato dummy (one-hot encoding).")
+        
+        # Convertir a tipo Int64 de pandas que maneja NaN, luego a string para get_dummies
+        # El argumento dummy_na=False evita crear una columna para los NaN.
+        df_dummies_temp = df_modelo_temp[categorical_cols_to_dummify].astype('Int64')
+        
+        df_dummies = pd.get_dummies(df_dummies_temp.astype(str), columns=categorical_cols_to_dummify, drop_first=True, dummy_na=False)
 
-    # 3. Unir todos los DataFrames: numéricas, dummies de país, otras dummies y la variable 'y'
-    df_modelo_final = pd.concat([
-        df_modelo_temp[numeric_cols_for_model],
-        df_dummies_country,
-        df_dummies_other,
-        df_modelo_temp[[variable_y]]
-    ], axis=1)
-    predictores_finales = numeric_cols_for_model + list(df_dummies_country.columns) + list(df_dummies_other.columns)
+        df_modelo_temp = pd.concat([df_modelo_temp[numeric_cols_for_model], df_dummies, df_modelo_temp[[variable_y, 'CNT']]], axis=1)
+        predictores_finales = numeric_cols_for_model + list(df_dummies.columns)
+    else:
+        predictores_finales = numeric_cols_for_model
 
     # Eliminar filas con datos faltantes en cualquiera de las columnas seleccionadas
-    df_modelo_final.dropna(inplace=True)
+    df_modelo_temp.dropna(inplace=True)
 
-    print(f"\nSe usarán {len(df_modelo_final)} observaciones completas para el modelo de regresión después de manejar tipos de datos.")
+    print(f"\nSe usarán {len(df_modelo_temp)} observaciones completas para el modelo de regresión después de manejar tipos de datos.")
 
     # Definir X e y
-    y = df_modelo_final[variable_y]
-    X = df_modelo_final[predictores_finales]
+    y = df_modelo_temp[variable_y]
+    X = df_modelo_temp[predictores_finales]
     
     # Agregar una constante (intercepto) al modelo
     X = sm.add_constant(X)
 
     # 3. Ajustar el modelo OLS con errores estándar clusterizados por país
-    # Se cambia cov_type='cluster' por 'HC1' (errores robustos de White)
-    # ya que ahora controlamos por país con variables dummy.
     modelo_ols = sm.OLS(y, X)
-    resultados = modelo_ols.fit(cov_type='HC1')
+    resultados = modelo_ols.fit(cov_type='cluster', cov_kwds={'groups': df_modelo_temp['CNT']})
 
-    # 4. Mostrar un resumen simple en la consola y guardar el completo en Excel
-    print("\n--- Resumen del Modelo ---")
-    print(f"Variable Dependiente: {resultados.model.endog_names}")
-    print(f"R-cuadrado ajustado: {resultados.rsquared_adj:.4f}")
-    print(f"Observaciones: {int(resultados.nobs)}")
-    
-    # Intentar imprimir el resumen completo, pero si es muy grande, solo mostrar un aviso.
-    try:
-        print(resultados.summary())
-    except AssertionError:
-        print("\n⚠️  El resumen del modelo es demasiado grande para mostrarlo completo en la consola.")
-        print("    Los resultados detallados se guardarán en el archivo Excel.")
+    # 4. Mostrar el resumen de los resultados del modelo
+    print(resultados.summary())
     print("="*80 + "\n")
-
-    # --- Guardar resultados en Excel ---
-    # Construir el DataFrame de resultados directamente para evitar errores de formato
-    resumen_df = pd.DataFrame({
-        'coef': resultados.params,
-        'std err': resultados.bse,
-        't': resultados.tvalues,
-        'P>|t|': resultados.pvalues,
-        '[0.025': resultados.conf_int()[0],
-        '0.975]': resultados.conf_int()[1]
-    })
-    
-    # Escribir el DataFrame en una hoja de Excel específica para la materia
-    resumen_df.to_excel(writer, sheet_name=f'Resultados_{nombre_materia}')
-    print(f"✅ Resultados para {nombre_materia} guardados en la hoja '{nombre_materia}' del archivo '{output_excel_path}'")
-
-# Guardar y cerrar el archivo de Excel
-writer.close()
-print(f"\n🎉 ¡Análisis completado! Todos los resultados han sido guardados en '{output_excel_path}'")
