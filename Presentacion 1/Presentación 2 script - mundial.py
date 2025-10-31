@@ -2,8 +2,8 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 
-df = pd.read_parquet("PISA_LATAM.parquet")
-df = df.reset_index()
+df = pd.read_parquet("CY08MSP_STU_QQQ.parquet")
+
 
 
 
@@ -56,7 +56,7 @@ import numpy as np
 missing_pct = df.isna().sum() / len(df) * 100
 
 # Identificar las columnas con más del 60% de valores faltantes
-columnas_a_eliminar = missing_pct[missing_pct > 50].index.tolist()
+columnas_a_eliminar = missing_pct[missing_pct > 30].index.tolist()
 
 print("\n" + "="*80)
 print("⚠️  Variables eliminadas del modelo por tener más de 50% de datos faltantes:")
@@ -72,7 +72,7 @@ predictores = [
     'ST004D01T','AGE', 'GRADE', 'ISCEDP', 'IMMIG', 'COBN_S', 'COBN_M', 'COBN_F', 'LANGN', 
     'REPEAT', 'MISSSC', 'SKIPPING', 'TARDYSD', 'EXERPRAC', 'STUDYHMW', 
     'WORKPAY', 'WORKHOME', 'EXPECEDU', 'MATHPREF', 'MATHEASE', 'MATHMOT', 
-    'DURECEC', 'BSMJ', 'RELATST', 'BELONG', 'BULLIED', 'FEELSAFE', 
+    'DURECEC', 'BSMJ', 'SISCO', 'RELATST', 'BELONG', 'BULLIED', 'FEELSAFE', 
     'SCHRISK', 'PERSEVAGR', 'CURIOAGR', 'COOPAGR', 'EMPATAGR', 'ASSERAGR', 
     'STRESAGR', 'EMOCOAGR', 'GROSAGR', 'INFOSEEK', 'FAMSUP', 'DISCLIM', 
     'TEACHSUP', 'COGACRCO', 'COGACMCO', 'EXPOFA', 'EXPO21ST', 'MATHEFF', 
@@ -137,6 +137,13 @@ def prepare_data_for_model(df, predictores_filtrados, predictores_dummies, varia
     predictores_finales = numeric_cols_for_model + list(df_dummies_country.columns) + list(df_dummies_other.columns)
     
     return df_modelo_final, predictores_finales
+
+# Definir las materias para el bucle
+materias = {
+    'Matemática': 'puntaje_matematica',
+    'Lengua': 'puntaje_lengua',
+    'Ciencias': 'puntaje_ciencias'
+}
 
 # Crear un ExcelWriter para guardar los resultados
 output_excel_path = 'resultados_regresion_pisa.xlsx'
@@ -447,25 +454,3 @@ plt.xticks(rotation=45, ha='right')
 plt.yticks(rotation=0)
 plt.tight_layout()
 plt.show()
-   
- # --- Comprobación de Multicolinealidad (VIF) ---
-from statsmodels.stats.outliers_influence import variance_inflation_factor
-
-print("\nCalculando el Factor de Inflación de la Varianza (VIF) para las variables predictoras...")
-print("Un VIF alto (generalmente > 10) sugiere multicolinealidad.")
-
-    # El cálculo de VIF puede ser computacionalmente intensivo con muchas variables.
-    # Lo calculamos sobre el DataFrame final antes de la división train/test.
-X_vif = df_modelo_final[predictores_finales]
-    
-    # Añadir una constante para el cálculo de VIF, como en un modelo de regresión
-X_vif_const = sm.add_constant(X_vif)
-
-vif_data = pd.DataFrame()
-vif_data["feature"] = X_vif_const.columns
-vif_data["VIF"] = [variance_inflation_factor(X_vif_const.values, i) for i in range(X_vif_const.shape[1])]
-    
-    # Mostrar las 10 variables con el VIF más alto, excluyendo la constante
-print("\n--- Top 10 Variables con Mayor VIF ---")
-print(vif_data.sort_values('VIF', ascending=False).drop(vif_data[vif_data['feature'] == 'const'].index).head(10))
-print("="*80)
