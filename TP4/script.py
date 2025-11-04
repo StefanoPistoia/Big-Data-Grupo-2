@@ -124,6 +124,10 @@ train_2025_full = train_2025[[Y] + X].dropna()
 y_train = train_2025_full[Y]
 X_train = train_2025_full[X]
 
+# --- Diagnóstico: Verificar valores únicos en las variables categóricas ---
+print("\nVerificando valores únicos en X_train antes de crear dummies:")
+print(X_train[categorical_vars].nunique())
+
 # Convertir variables categóricas en dummies
 categorical_vars = ['cobertura_medica', 'sexo', 'ESTADO', 'estado_civil']
 X_train_dummies = pd.get_dummies(X_train, columns=categorical_vars, drop_first=True, dtype=float)
@@ -193,7 +197,6 @@ for row in t.rows:
 doc.save('Resultados_Logit.docx')
 
 import matplotlib.pyplot as plt
-
 
 
 # 1. Crear rango de valores para 'educ'
@@ -607,4 +610,3 @@ df_coefs.to_csv('Coeficientes_Logit_Comparativo.csv')
 # Mostrar resumen mínimo en consola
 print("\nTabla de coeficientes creada: 'Coeficientes_Logit_Comparativo.docx' y .csv")
 print(df_coefs.head(12))
-
