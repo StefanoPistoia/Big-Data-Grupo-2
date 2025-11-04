@@ -469,3 +469,12 @@ vif_data["VIF"] = [variance_inflation_factor(X_vif_const.values, i) for i in ran
 print("\n--- Top 10 Variables con Mayor VIF ---")
 print(vif_data.sort_values('VIF', ascending=False).drop(vif_data[vif_data['feature'] == 'const'].index).head(10))
 print("="*80)
+
+#%%
+import pandas as pd
+
+sheet1 = pd.read_excel('resultados_regresion_pisa.xlsx', sheet_name='Resultados_Matemática')
+sheet2 = pd.read_excel('resultados_lasso_pisa.xlsx', sheet_name='Resultados_Matemática')
+
+merged = sheet1.merge(sheet2, on='variable', how='left')
+merged.to_excel('merged.xlsx', index=False)
