@@ -21,6 +21,10 @@ from sklearn.metrics import accuracy_score, classification_report
 # Cargar el archivo Excel en un DataFrame de pandas
 df = pd.read_excel("db_nea_respuestas.xlsx")
 
+# Cuando ESTADO es 2 (desocupado), 3 (inactivo) o 4 (menor), las horas trabajadas son 0.
+# Se imputa el valor 0 en 'horastrab' para estos casos.
+df.loc[df['ESTADO'].isin([2, 3, 4]), 'horastrab'] = 0
+
 # Nombre de la columna que contiene el año
 columna_anio = 'ANO4'
 # Semilla para la reproducibilidad
