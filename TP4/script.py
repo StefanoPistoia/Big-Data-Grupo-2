@@ -128,13 +128,30 @@ train_2025_full = train_2025[[Y] + X].dropna()
 y_train = train_2025_full[Y]
 X_train = train_2025_full[X]
 
-# --- Diagnóstico: Verificar valores únicos en las variables categóricas ---
-print("\nVerificando valores únicos en X_train antes de crear dummies:")
-print(X_train[categorical_vars].nunique())
+
 
 # Convertir variables categóricas en dummies
 categorical_vars = ['cobertura_medica', 'sexo', 'ESTADO', 'estado_civil']
 X_train_dummies = pd.get_dummies(X_train, columns=categorical_vars, drop_first=True, dtype=float)
+
+# --- Renombrar columnas dummy para mayor claridad ---
+rename_map = {
+    'cobertura_medica_2.0': 'coberturamedica_mutual_prepaga_emergencia',
+    'cobertura_medica_3.0': 'cobertura_medica_plan_seguro_publico',
+    'cobertura_medica_4.0': 'cobertura_medica_ninguna',
+    'cobertura_medica_12.0': 'cobertura_medica_obra_social_y_mutual_prepaga_emergencia',
+    'ESTADO_2.0': 'estado_laboral_desocupado',
+    'ESTADO_3.0': 'estado_laboral_inactivo',
+    'ESTADO_4.0': 'estado_laboral_menor_de_10',
+    'sexo_2': 'sexo_femenino',
+    'estado_civil_2': 'estado_civil_casado',
+    'estado_civil_3': 'estado_civil_separado',
+    'estado_civil_4': 'estado_civil_viudo',
+    'estado_civil_5': 'estado_civil_soltero'
+}
+
+X_train_dummies.rename(columns=rename_map, inplace=True)
+
 
 # Statsmodels requiere que se añada una constante manualmente
 X_train_const = sm.add_constant(X_train_dummies)
@@ -259,6 +276,10 @@ X_test_knn = test_df_knn[X]
 # Convertir variables categóricas en dummies
 X_train_knn_dummies = pd.get_dummies(X_train_knn, columns=categorical_vars, drop_first=True, dtype=float)
 X_test_knn_dummies = pd.get_dummies(X_test_knn, columns=categorical_vars, drop_first=True, dtype=float)
+
+# Renombrar columnas en ambos dataframes
+X_train_knn_dummies.rename(columns=rename_map, inplace=True)
+X_test_knn_dummies.rename(columns=rename_map, inplace=True)
 
 # Alinear columnas para asegurar que train y test tengan las mismas 
 X_train_aligned, X_test_aligned = X_train_knn_dummies.align(X_test_knn_dummies, join='inner', axis=1, fill_value=0)
@@ -614,3 +635,142 @@ df_coefs.to_csv('Coeficientes_Logit_Comparativo.csv')
 # Mostrar resumen mínimo en consola
 print("\nTabla de coeficientes creada: 'Coeficientes_Logit_Comparativo.docx' y .csv")
 print(df_coefs.head(12))
+
+
+
+# --- Comparación de Desempeño de Modelos en Test (2025) ---
+
+from sklearn.metrics import confusion_matrix, roc_curve, auc, f1_score
+import seaborn as sns
+
+print("\n--- Comparando el desempeño de los modelos en el conjunto de test (2025) ---")
+
+# 1. Preparar datos de Test para todos los modelos
+# Ya tenemos y_test_knn, X_test_aligned y X_test_scaled de la sección de KNN.
+# y_test_knn es nuestro target real.
+# X_test_scaled es para KNN, LASSO y Ridge.
+# Necesitamos preparar el test set para el Logit de statsmodels.
+# Primero, filtramos el test set para eliminar filas con NaNs en las variables X o Y, igual que hicimos con el train set.
+test_2025_full = test_2025[[Y] + X].dropna()
+
+# Ahora separamos X e y del conjunto de test limpio
+y_test = test_2025_full[Y]
+X_test_logit = test_2025_full[X]
+
+# Creamos dummies, renombramos y alineamos columnas como antes
+X_test_logit_dummies = pd.get_dummies(X_test_logit, columns=categorical_vars, drop_first=True, dtype=float)
+X_test_logit_dummies.rename(columns=rename_map, inplace=True)
+X_test_logit_aligned = X_test_logit_dummies.reindex(columns=X_train_dummies.columns, fill_value=0)
+X_test_logit_const = X_test_logit_aligned
+X_test_logit_const = sm.add_constant(X_test_logit_const, has_constant='add')
+
+
+# 2. Realizar predicciones con cada modelo
+
+# a) Logit (statsmodels)
+y_pred_prob_logit = result.predict(X_test_logit_const)
+y_pred_logit = (y_pred_prob_logit > 0.5).astype(int)
+
+# b) KNN con K-CV (usando optimal_k)
+knn_optimo = KNeighborsClassifier(n_neighbors=optimal_k)
+knn_optimo.fit(X_train_scaled, y_train_knn)
+y_pred_knn_opt = knn_optimo.predict(X_test_scaled)
+y_pred_prob_knn_opt = knn_optimo.predict_proba(X_test_scaled)[:, 1]
+
+# c) Logit con LASSO (λ^cv)
+y_pred_lasso = lasso_cv_model.predict(X_test_scaled)
+y_pred_prob_lasso = lasso_cv_model.predict_proba(X_test_scaled)[:, 1]
+
+# d) Logit con Ridge (λ^cv)
+y_pred_ridge = ridge_cv_model.predict(X_test_scaled)
+y_pred_prob_ridge = ridge_cv_model.predict_proba(X_test_scaled)[:, 1]
+
+
+# 3. Matriz de Confusión para el modelo Logit
+cm_logit = confusion_matrix(y_test, y_pred_logit)
+
+plt.figure(figsize=(8, 6))
+sns.heatmap(cm_logit, annot=True, fmt='d', cmap='Blues', 
+            xticklabels=['Pred. No Pobre', 'Pred. Pobre'], 
+            yticklabels=['Real No Pobre', 'Real Pobre'])
+plt.title('Matriz de Confusión - Modelo Logit (p > 0.5)', fontsize=15)
+plt.ylabel('Clase Real', fontsize=12)
+plt.xlabel('Clase Predicha', fontsize=12)
+plt.show()
+
+
+# 4. Curva ROC para los cuatro modelos
+fpr_logit, tpr_logit, _ = roc_curve(y_test, y_pred_prob_logit)
+roc_auc_logit = auc(fpr_logit, tpr_logit)
+
+fpr_knn, tpr_knn, _ = roc_curve(y_test_knn, y_pred_prob_knn_opt)
+roc_auc_knn = auc(fpr_knn, tpr_knn)
+
+fpr_lasso, tpr_lasso, _ = roc_curve(y_test_knn, y_pred_prob_lasso)
+roc_auc_lasso = auc(fpr_lasso, tpr_lasso)
+
+fpr_ridge, tpr_ridge, _ = roc_curve(y_test_knn, y_pred_prob_ridge)
+roc_auc_ridge = auc(fpr_ridge, tpr_ridge)
+
+plt.figure(figsize=(10, 8))
+plt.plot(fpr_logit, tpr_logit, color='blue', linestyle='-', lw=2.5, label=f'Logit (AUC = {roc_auc_logit:.3f})')
+plt.plot(fpr_knn, tpr_knn, color='green', linestyle='-', lw=2, label=f'KNN (K={optimal_k}) (AUC = {roc_auc_knn:.3f})')
+plt.plot(fpr_lasso, tpr_lasso, color='red', linestyle=':', lw=3, label=f'Logit LASSO (AUC = {roc_auc_lasso:.3f})')
+plt.plot(fpr_ridge, tpr_ridge, color='purple', linestyle='--', lw=2.5, label=f'Logit Ridge (AUC = {roc_auc_ridge:.3f})')
+plt.plot([0, 1], [0, 1], color='gray', lw=2, linestyle='--', label='Clasificador Aleatorio')
+plt.xlim([0.0, 1.0])
+plt.ylim([0.0, 1.05])
+plt.xlabel('Tasa de Falsos Positivos (1 - Especificidad)', fontsize=12)
+plt.ylabel('Tasa de Verdaderos Positivos (Sensibilidad)', fontsize=12)
+plt.title('Curva ROC Comparativa de Modelos', fontsize=15)
+plt.legend(loc="lower right")
+plt.grid(alpha=0.4)
+plt.show()
+
+
+# 5. Tabla con métricas de clasificación
+
+# Usaremos y_test_knn como referencia para todos, ya que es el que se alinea con los datos escalados.
+# El y_test del logit es casi idéntico, solo difiere por el manejo de NaNs inicial.
+
+metrics_data = {
+    'Modelo': ['Logit', f'KNN (K={optimal_k})', 'Logit LASSO', 'Logit Ridge'],
+    'Accuracy': [
+        accuracy_score(y_test, y_pred_logit),
+        accuracy_score(y_test_knn, y_pred_knn_opt),
+        accuracy_score(y_test_knn, y_pred_lasso),
+        accuracy_score(y_test_knn, y_pred_ridge)
+    ],
+    'F1-Score': [
+        f1_score(y_test, y_pred_logit),
+        f1_score(y_test_knn, y_pred_knn_opt),
+        f1_score(y_test_knn, y_pred_lasso),
+        f1_score(y_test_knn, y_pred_ridge)
+    ],
+    'AUC': [roc_auc_logit, roc_auc_knn, roc_auc_lasso, roc_auc_ridge]
+}
+
+df_metrics = pd.DataFrame(metrics_data)
+df_metrics = df_metrics.round(4)
+
+print("\n--- Tabla Comparativa de Métricas de Clasificación ---")
+print(df_metrics)
+
+# Exportar a Word
+doc_metrics = Document()
+doc_metrics.add_heading('Métricas Comparativas de Modelos de Clasificación', level=1)
+doc_metrics.add_paragraph("Evaluación realizada sobre el conjunto de test del año 2025.")
+
+t = doc_metrics.add_table(rows=1, cols=len(df_metrics.columns))
+t.style = 'Light List Accent 1'
+hdr_cells = t.rows[0].cells
+for i, col in enumerate(df_metrics.columns):
+    hdr_cells[i].text = col
+
+for _, row in df_metrics.iterrows():
+    row_cells = t.add_row().cells
+    for j, val in enumerate(row):
+        row_cells[j].text = str(val)
+
+doc_metrics.save('Metricas_Comparativas.docx')
+print("\nTabla de métricas exportada a 'Metricas_Comparativas.docx'")
