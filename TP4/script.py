@@ -774,3 +774,97 @@ for _, row in df_metrics.iterrows():
 
 doc_metrics.save('Metricas_Comparativas.docx')
 print("\nTabla de métricas exportada a 'Metricas_Comparativas.docx'")
+
+
+
+# --- Visualización de Fronteras de Decisión de KNN ---
+
+from matplotlib.colors import ListedColormap
+
+print("\n--- Generando visualización de fronteras de decisión para KNN ---")
+
+# 1. Seleccionar las dos características para la visualización
+features_for_plot = ['edad', 'horastrab'] # Variables en los ejes
+
+# Usaremos los datos de entrenamiento completos y escalados que ya tenemos
+# X_train_aligned: DataFrame con todas las variables (dummies, sin escalar)
+# X_train_scaled: Array numpy con todas las variables (escaladas)
+# y_train_knn: Target
+# scaler: El scaler ajustado a todos los datos de entrenamiento
+
+# 3. Definir los valores de K y preparar la figura para los subplots
+k_to_plot = [1, 10]
+fig, axes = plt.subplots(1, 2, figsize=(18, 8))
+
+# Colores para el fondo y los puntos
+# Usamos los mismos colores que en la petición anterior
+# Rosa claro para 'Pobre' (clase 1), Azul claro para 'No Pobre' (clase 0)
+cmap_light = ListedColormap(['#A0E7E5', '#FFC0CB'])
+cmap_bold = ['darkblue', 'darkred']
+
+for i, k in enumerate(k_to_plot):
+    ax = axes[i]
+    
+    # 4. Entrenar un modelo KNN con el valor de K actual
+    knn_plot = KNeighborsClassifier(n_neighbors=k)
+    # Entrenamos con TODAS las variables escaladas
+    knn_plot.fit(X_train_scaled, y_train_knn)
+
+    # 5. Crear una malla de puntos para graficar la frontera de decisión
+    h = 1.0  # Tamaño del paso en la malla
+    x_min, x_max = X_train_knn[features_for_plot[0]].min() - 5, X_train_knn[features_for_plot[0]].max() + 5
+    y_min, y_max = X_train_knn[features_for_plot[1]].min() - 5, X_train_knn[features_for_plot[1]].max() + 5
+    xx, yy = np.meshgrid(np.arange(x_min, x_max, h),
+                         np.arange(y_min, y_max, h))
+
+    # 6. Predecir la clase para cada punto en la malla
+    # Para cada punto de la malla, creamos un vector de características completo
+    # manteniendo las otras variables en su media.
+    
+    # Crear un DataFrame base con las medias de todas las variables
+    full_features_mean = X_train_aligned.mean().to_frame().T
+    
+    # Replicar este vector de medias para cada punto en la malla
+    grid_points_df = pd.DataFrame(np.c_[xx.ravel(), yy.ravel()], columns=features_for_plot)
+    prediction_df = pd.concat([
+        pd.DataFrame(full_features_mean.values.repeat(len(grid_points_df), axis=0), columns=X_train_aligned.columns),
+        grid_points_df
+    ], axis=1)
+    prediction_df = prediction_df[X_train_aligned.columns] # Asegurar el orden y columnas correctas
+    # Replicar el vector de medias para cada punto en la malla
+    num_grid_points = len(xx.ravel())
+    prediction_df = pd.DataFrame(full_features_mean.values.repeat(num_grid_points, axis=0), columns=X_train_aligned.columns)
+    
+    # Sobrescribir las columnas de los ejes con los valores de la malla
+    prediction_df[features_for_plot[0]] = xx.ravel()
+    prediction_df[features_for_plot[1]] = yy.ravel()
+
+    # Escalar los datos de la malla usando el scaler original y predecir
+    Z = knn_plot.predict(scaler.transform(prediction_df))
+    Z = Z.reshape(xx.shape)
+
+    # 7. Dibujar el fondo con los colores de la predicción
+    ax.contourf(xx, yy, Z, cmap=cmap_light, alpha=0.8)
+
+    # 8. Dibujar los puntos de entrenamiento originales
+    sns.scatterplot(x=X_train_knn[features_for_plot[0]], y=X_train_knn[features_for_plot[1]], hue=y_train_knn,
+                    palette=cmap_bold, alpha=0.7, edgecolor="k", s=50, ax=ax)
+
+    ax.set_title(f'Frontera de Decisión de KNN con K = {k}', fontsize=15)
+    ax.set_xlabel(features_for_plot[0].capitalize(), fontsize=12)
+    ax.set_ylabel(features_for_plot[1].capitalize(), fontsize=12)
+    ax.set_xlim(xx.min(), xx.max())
+    ax.set_ylim(yy.min(), yy.max())
+    
+    # Mejorar la leyenda
+    handles, labels = ax.get_legend_handles_labels()
+    ax.legend(handles, ['No Pobre', 'Pobre'], title='Clase Real')
+
+plt.suptitle('Visualización de Clases Predichas por KNN (Pobre/No Pobre)', fontsize=18, y=0.98)
+plt.tight_layout(rect=[0, 0, 1, 0.96])
+plt.show()
+
+print("\n--- Interpretación de los Gráficos (Modelo Completo) ---")
+print("Estos gráficos muestran una 'rebanada' 2D de la frontera de decisión del modelo KNN entrenado con TODAS las variables. Las otras variables se mantienen fijas en su valor promedio.")
+print("El gráfico con K=1 muestra cómo el modelo completo, incluso en este subespacio, crea una frontera muy irregular para clasificar perfectamente los puntos de entrenamiento cercanos. Esto refleja el sobreajuste del modelo global.")
+print("El gráfico con K=10 muestra una frontera mucho más suave y generalizada. La influencia de las otras variables (fijadas en su media) y el mayor número de vecinos se combinan para crear una superficie de decisión más robusta y menos sensible a puntos individuales.")
