@@ -213,68 +213,40 @@ for nombre_materia, variable_y in materias.items():
 writer.close()
 print(f"\n🎉 ¡Análisis completado! Todos los resultados han sido guardados en '{output_excel_path}'")
 
-#%% Modelo Random Forest con Fine-Tuning y Validación Cruzada
+#%% Modelo Random Forest con evaluación OOB
 
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.model_selection import RandomizedSearchCV
 from sklearn.metrics import mean_squared_error, r2_score
 import numpy as np
 
 for nombre_materia, variable_y in materias.items():
     print("\n" + "="*80)
-    print(f"🌳 EJECUTANDO RANDOM FOREST CON HYPERPARAMETER TUNING PARA: {nombre_materia.upper()}")
+    print(f"🌳 EJECUTANDO RANDOM FOREST PARA: {nombre_materia.upper()}")
     print("="*80)
 
     # 1. Preparar los datos usando la función refactorizada
     df_modelo_final, predictores_finales = prepare_data_for_model(df, predictores_filtrados, predictores_dummies, variable_y)
 
-    print(f"\nSe usarán {len(df_modelo_final)} observaciones completas para el modelo.")
+    print(f"\nSe usarán {len(df_modelo_final)} observaciones completas para el modelo de Random Forest.")
 
     y = df_modelo_final[variable_y]
     X = df_modelo_final[predictores_finales]
 
-    # 2. División de datos en Entrenamiento+Validación (80%) y Prueba (20%)
-    X_dev, X_test, y_dev, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    # 2. División de datos en Entrenamiento (80%) y Prueba (20%)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
     
-    print(f"Tamaño del conjunto de Desarrollo (Entrenamiento + Validación): {len(X_dev)} ({len(X_dev)/len(X)*100:.1f}%)")
-    print(f"Tamaño del conjunto de Prueba Final: {len(X_test)} ({len(X_test)/len(X)*100:.1f}%)")
+    print(f"Tamaño del conjunto de Entrenamiento: {len(X_train)} ({len(X_train)/len(X)*100:.1f}%)")
+    print(f"Tamaño del conjunto de Prueba: {len(X_test)} ({len(X_test)/len(X)*100:.1f}%)")
 
-    # 3. Definir el espacio de hiperparámetros para RandomizedSearchCV
-    param_dist = {
-        'n_estimators': [100, 200, 300],
-        'max_features': ['sqrt', 'log2', 1.0],
-        'max_depth': [None, 10, 20, 30],
-        'min_samples_split': [2, 5, 10],
-        'min_samples_leaf': [1, 2, 4],
-        'bootstrap': [True] # OOB score solo está disponible si bootstrap=True
-    }
+    # 3. Configurar y entrenar el modelo Random Forest
+    # oob_score=True calcula el score en las muestras "Out-of-Bag", una buena estimación del rendimiento.
+    # n_jobs=-1 usa todos los procesadores para acelerar el entrenamiento.
+    print("\nEntrenando el modelo Random Forest...")
+    rf_model = RandomForestRegressor(n_estimators=200, random_state=42, oob_score=True, n_jobs=-1, max_features='sqrt', min_samples_leaf=4)
+    rf_model.fit(X_train, y_train)
 
-    # 4. Configurar y ejecutar la búsqueda aleatoria con validación cruzada (k-validation)
-    rf = RandomForestRegressor(random_state=42, oob_score=True)
-    
-    # n_iter controla cuántas combinaciones de parámetros se prueban.
-    # cv=3 significa 3-fold cross-validation.
-    # n_jobs=-1 usa todos los procesadores disponibles.
-    random_search = RandomizedSearchCV(
-        estimator=rf, 
-        param_distributions=param_dist, 
-        n_iter=10, # Probar 10 combinaciones. Aumentar para una búsqueda más exhaustiva.
-        cv=5, 
-        verbose=2, 
-        random_state=42, 
-        n_jobs=-1,
-        scoring='neg_root_mean_squared_error' # Métrica para optimizar
-    )
-
-    print("\nIniciando búsqueda de hiperparámetros con RandomizedSearchCV...")
-    random_search.fit(X_dev, y_dev)
-
-    print("\n--- Mejores Hiperparámetros Encontrados ---")
-    print(random_search.best_params_)
-
-    # 5. Evaluar el mejor modelo en el conjunto de prueba final
-    best_rf = random_search.best_estimator_
-    y_pred_final = best_rf.predict(X_test)
+    # 4. Evaluar el modelo en el conjunto de prueba
+    y_pred_final = rf_model.predict(X_test)
 
     rmse_final = np.sqrt(mean_squared_error(y_test, y_pred_final))
     r2_final = r2_score(y_test, y_pred_final)
@@ -282,7 +254,7 @@ for nombre_materia, variable_y in materias.items():
     print("\n--- Resultados de la Evaluación Final en el Conjunto de Prueba (20%) ---")
     print(f"Raíz del Error Cuadrático Medio (RMSE): {rmse_final:.4f}")
     print(f"Coeficiente de Determinación (R²): {r2_final:.4f}")
-    print(f"Out-of-Bag (OOB) Score del mejor modelo (entrenado en 80%): {best_rf.oob_score_:.4f}")
+    print(f"Out-of-Bag (OOB) Score (R² estimado sobre datos no vistos durante el entrenamiento): {rf_model.oob_score_:.4f}")
     print("="*80 + "\n")
 
 #%% Modelo Lasso con Cross-Validation
@@ -404,6 +376,71 @@ for nombre_materia, variable_y in materias.items():
 writer_ridge.close()
 print(f"\n🎉 ¡Análisis Ridge completado! Todos los resultados han sido guardados en '{output_excel_path_ridge}'")
 
+#%% Modelo Elastic Net con Cross-Validation
+
+from sklearn.linear_model import ElasticNetCV
+from sklearn.preprocessing import StandardScaler
+
+# Crear un nuevo ExcelWriter para los resultados de Elastic Net
+output_excel_path_elasticnet = 'resultados_elasticnet_pisa.xlsx'
+writer_elasticnet = pd.ExcelWriter(output_excel_path_elasticnet, engine='xlsxwriter')
+
+# Definir un rango de l1_ratios para que ElasticNetCV pruebe
+# l1_ratio = 1 es Lasso, l1_ratio = 0 es Ridge (casi, alpha=0 no es exactamente lo mismo)
+l1_ratios = [0.1, 0.5, 0.7, 0.9, 0.95, 0.99, 1]
+
+for nombre_materia, variable_y in materias.items():
+    print("\n" + "="*80)
+    print(f" ELASTIC NET REGRESSION CON CROSS-VALIDATION PARA: {nombre_materia.upper()}")
+    print("="*80)
+
+    # 1. Preparar los datos usando la función refactorizada
+    df_modelo_final, predictores_finales = prepare_data_for_model(df, predictores_filtrados, predictores_dummies, variable_y)
+
+    print(f"\nSe usarán {len(df_modelo_final)} observaciones completas para el modelo.")
+
+    y = df_modelo_final[variable_y]
+    X = df_modelo_final[predictores_finales]
+
+    # 2. División de datos en Entrenamiento (80%) y Prueba (20%)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    # 3. Escalar las variables predictoras
+    # Es crucial para que la penalización funcione correctamente.
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    X_test_scaled = scaler.transform(X_test)
+
+    # 4. Ajustar el modelo ElasticNetCV para encontrar el alpha y l1_ratio óptimos
+    print("\nBuscando los hiperparámetros óptimos con ElasticNetCV (5-fold cross-validation)...")
+    elasticnet_cv = ElasticNetCV(l1_ratio=l1_ratios, cv=5, random_state=42, max_iter=10000, n_jobs=-1)
+    elasticnet_cv.fit(X_train_scaled, y_train)
+
+    print(f"Alpha óptimo encontrado: {elasticnet_cv.alpha_:.6f}")
+    print(f"L1 Ratio óptimo encontrado: {elasticnet_cv.l1_ratio_:.2f}")
+
+    # 5. Evaluar el modelo final en el conjunto de prueba
+    y_pred = elasticnet_cv.predict(X_test_scaled)
+    r2 = r2_score(y_test, y_pred)
+    rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+
+    print("\n--- Evaluación en el Conjunto de Prueba (20%) ---")
+    print(f"R-cuadrado (R²): {r2:.4f}")
+    print(f"Raíz del Error Cuadrático Medio (RMSE): {rmse:.4f}")
+
+    # 6. Guardar los coeficientes en Excel
+    coefs = pd.Series(elasticnet_cv.coef_, index=X.columns)
+    num_vars_seleccionadas = (coefs != 0).sum()
+    print(f"Número de variables seleccionadas por Elastic Net: {num_vars_seleccionadas} de {len(coefs)}")
+    
+    coefs_df = coefs.sort_values(ascending=False).to_frame(name='coeficiente_elasticnet')
+    coefs_df.to_excel(writer_elasticnet, sheet_name=f'Resultados_{nombre_materia}')
+    print(f"✅ Coeficientes de Elastic Net para {nombre_materia} guardados en la hoja '{nombre_materia}' del archivo '{output_excel_path_elasticnet}'\n")
+
+# Guardar y cerrar el archivo de Excel de Elastic Net
+writer_elasticnet.close()
+print(f"\n🎉 ¡Análisis Elastic Net completado! Todos los resultados han sido guardados en '{output_excel_path_elasticnet}'")
+
 #%% Heatmap de Correlaciones de Variables Numéricas
 
 import matplotlib.pyplot as plt
@@ -470,11 +507,306 @@ print("\n--- Top 10 Variables con Mayor VIF ---")
 print(vif_data.sort_values('VIF', ascending=False).drop(vif_data[vif_data['feature'] == 'const'].index).head(10))
 print("="*80)
 
+#%% Análisis de Linealidad de Predictores vs. Puntaje de Matemática
+
+print("\n" + "="*80)
+print("🔎 ANALIZANDO LA LINEALIDAD DE LOS PREDICTORES CON EL PUNTAJE DE MATEMÁTICA")
+print("="*80)
+
+# 1. Identificar predictores numéricos (excluyendo los que se convirtieron en dummies)
+numeric_predictors = [p for p in predictores_filtrados if p not in predictores_dummies and p != 'CNT']
+
+# 2. Análisis Estadístico: Calcular Correlación de Pearson
+print("\n--- Coeficientes de Correlación de Pearson con 'puntaje_matematica' ---")
+print("Mide la fuerza de la relación LINEAL. Valores cercanos a 0 indican una relación lineal débil.")
+
+# Crear un DataFrame temporal con las variables de interés y eliminar NaNs para el cálculo
+df_corr = df[numeric_predictors + ['puntaje_matematica']].dropna()
+
+correlations = df_corr[numeric_predictors].corrwith(df_corr['puntaje_matematica'])
+
+# Mostrar las 15 correlaciones más fuertes (positivas y negativas)
+correlations_abs_sorted = correlations.abs().sort_values(ascending=False)
+print("\nTop 15 correlaciones más fuertes (en valor absoluto):")
+print(correlations.loc[correlations_abs_sorted.head(15).index].to_string())
+
+# 3. Análisis Visual: Generar Grids de Gráficos de Dispersión
+print("\nGenerando gráficos de dispersión para visualizar la linealidad...")
+
+n_predictors = len(numeric_predictors)
+plots_per_grid = 16 # 4x4 grid
+
+for i in range(0, n_predictors, plots_per_grid):
+    chunk_predictors = numeric_predictors[i:i + plots_per_grid]
+    
+    # Determinar el tamaño de la grilla
+    n_cols = 4
+    n_rows = (len(chunk_predictors) + n_cols - 1) // n_cols
+    
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(20, 5 * n_rows))
+    axes = axes.flatten() # Aplanar el array de ejes para iterar fácilmente
+
+    for j, predictor in enumerate(chunk_predictors):
+        sns.regplot(data=df, x=predictor, y='puntaje_matematica', ax=axes[j], 
+                    scatter_kws={'alpha':0.2}, line_kws={'color':'red'})
+        axes[j].set_title(f'{predictor} vs. Matemática')
+        axes[j].set_xlabel(predictor)
+        axes[j].set_ylabel('Puntaje Matemática')
+
+    # Ocultar ejes no utilizados
+    for k in range(j + 1, len(axes)):
+        axes[k].set_visible(False)
+
+    plt.tight_layout(pad=2.0)
+    plt.suptitle(f'Análisis de Linealidad (Parte {i//plots_per_grid + 1})', fontsize=22, y=1.02)
+    plt.show()
+
+print("\n✅ Análisis de linealidad completado.")
+   
+ # --- Comprobación de Multicolinealidad (VIF) ---
+from statsmodels.stats.outliers_influence import variance_inflation_factor
+
+print("\nCalculando el Factor de Inflación de la Varianza (VIF) para las variables predictoras...")
+print("Un VIF alto (generalmente > 10) sugiere multicolinealidad.")
+
+    # El cálculo de VIF puede ser computacionalmente intensivo con muchas variables.
+    # Lo calculamos sobre el DataFrame final antes de la división train/test.
+X_vif = df_modelo_final[predictores_finales]
+    
+    # Añadir una constante para el cálculo de VIF, como en un modelo de regresión
+X_vif_const = sm.add_constant(X_vif)
+
+vif_data = pd.DataFrame()
+vif_data["feature"] = X_vif_const.columns
+vif_data["VIF"] = [variance_inflation_factor(X_vif_const.values, i) for i in range(X_vif_const.shape[1])]
+    
+    # Mostrar las 10 variables con el VIF más alto, excluyendo la constante
+print("\n--- Top 10 Variables con Mayor VIF ---")
+print(vif_data.sort_values('VIF', ascending=False).drop(vif_data[vif_data['feature'] == 'const'].index).head(10))
+print("="*80)
+
 #%%
 import pandas as pd
 
-sheet1 = pd.read_excel('resultados_regresion_pisa.xlsx', sheet_name='Resultados_Matemática')
-sheet2 = pd.read_excel('resultados_lasso_pisa.xlsx', sheet_name='Resultados_Matemática')
+sheet1 = pd.read_excel('resultados_regresion_pisa.xlsx', sheet_name='Resultados_Matemática', index_col=0)
+sheet2 = pd.read_excel('resultados_lasso_pisa.xlsx', sheet_name='Resultados_Matemática', index_col=0)
 
-merged = sheet1.merge(sheet2, on='variable', how='left')
-merged.to_excel('merged.xlsx', index=False)
+merged = sheet1.merge(sheet2, left_index=True, right_index=True, how='left')
+merged.to_excel('merged_pre.xlsx')
+
+
+#%% Tablas Comparativas OLS vs. Lasso en el Environment
+
+print("\n" + "="*80)
+print("📊 GENERANDO TABLAS COMPARATIVAS OLS vs. LASSO")
+print("="*80)
+
+# Diccionario para almacenar las tablas finales en el environment
+tablas_comparativas = {}
+
+for nombre_materia, variable_y in materias.items():
+    print("\n" + "="*80)
+    print(f"🔄  Generando tabla comparativa para: {nombre_materia.upper()}")
+    print("="*80)
+
+    # 1. Preparar datos
+    df_modelo, predictores_finales = prepare_data_for_model(df, predictores_filtrados, predictores_dummies, variable_y)
+    y = df_modelo[variable_y]
+    X = df_modelo[predictores_finales]
+
+    # 2. Dividir datos
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    # 3. Modelo OLS
+    X_train_ols = sm.add_constant(X_train)
+    modelo_ols = sm.OLS(y_train, X_train_ols).fit(cov_type='HC1')
+    resumen_ols = pd.DataFrame({
+        'coef_ols': modelo_ols.params,
+        'std_err_ols': modelo_ols.bse,
+        'p_value_ols': modelo_ols.pvalues
+    })
+
+    # 4. Modelo Lasso
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    lasso_cv = LassoCV(cv=5, random_state=42, max_iter=10000, n_jobs=-1)
+    lasso_cv.fit(X_train_scaled, y_train)
+    coefs_lasso = pd.Series(lasso_cv.coef_, index=X.columns, name='coef_lasso')
+
+    # 5. Fusionar y mostrar resultados
+    df_comparativo = resumen_ols.join(coefs_lasso).round(4)
+    tablas_comparativas[nombre_materia] = df_comparativo
+
+    print(f"\n--- Tabla Comparativa de Coeficientes: {nombre_materia} ---")
+    print(df_comparativo.to_string())
+    print("="*80 + "\n")
+
+print("\n🎉 ¡Análisis comparativo completado!")
+print("Las tablas están disponibles en el diccionario 'tablas_comparativas'.")
+
+
+#%% Gráficos comparativos de coeficientes OLS vs. Lasso
+
+print("\n" + "="*80)
+print("📈 GENERANDO GRÁFICOS COMPARATIVOS DE COEFICIENTES")
+print("="*80)
+
+# Corregí un pequeño error en la lista (faltaba una coma entre CREATAS y GROSAGR)
+top_coefs = ['MATHEFF', 'ST004D01T_2', 'HISCED', 'EXERPRAC', 'WORKPAY', 
+             'FAMCON', 'BMMJ1', 'REPEAT', 'CREATAS', 'GROSAGR']
+
+# Crear un diccionario para mapear los nombres de las variables a etiquetas más claras
+label_map = {
+    'MATHEFF': 'Autoeficacia Matemática',
+    'ST004D01T_2': 'Varón respecto a mujer',
+    'HISCED': 'Educación de padres',
+    'EXERPRAC': 'Practica deporte',
+    'WORKPAY': 'Trabajo pago por semana',
+    'FAMCON': 'Familiaridad conceptos matemáticos',
+    'BMMJ1': 'Nivel ocupacional madre',
+    'REPEAT': 'Repitió',
+    'CREATAS': 'Actividades creativas en la escuela',
+    'GROSAGR': 'Mentalidad de crecimiento'
+}
+# Iterar sobre cada materia para crear un gráfico distinto
+for nombre_materia, variable_y in materias.items():
+    
+    # 1. Obtener la tabla comparativa correspondiente
+    df_comp = tablas_comparativas[nombre_materia]
+    
+    # 2. Filtrar solo los coeficientes de interés y preparar para graficar
+    df_plot = df_comp.loc[df_comp.index.isin(top_coefs)].copy()
+    df_plot = df_plot[['coef_ols', 'coef_lasso']]
+    
+    # 3. Transformar de formato ancho a largo para seaborn
+    df_plot_long = df_plot.reset_index().melt(
+        id_vars='index', 
+        value_vars=['coef_ols', 'coef_lasso'],
+        var_name='modelo',
+        value_name='coeficiente'
+    )
+    df_plot_long.rename(columns={'index': 'variable'}, inplace=True)
+    
+    # Aplicar el mapeo para usar las nuevas etiquetas
+    df_plot_long['variable'] = df_plot_long['variable'].map(label_map)
+
+    # 4. Crear el gráfico
+    plt.figure(figsize=(14, 8))
+    # Ajuste: Usamos dodge=True para separar por modelo, pero quitamos el jitter
+    # para que los puntos queden perfectamente alineados en dos columnas.
+    ax = sns.stripplot(data=df_plot_long, x='variable', y='coeficiente', hue='modelo',
+                       palette={'coef_ols': 'blue', 'coef_lasso': 'red'},
+                       dodge=True, jitter=False, size=12, alpha=0.8)
+    
+    # 5. Añadir el valor de los coeficientes sobre cada punto
+    # 5. Añadir el valor de los coeficientes sobre cada punto con desplazamiento dinámico
+    # Calcular un desplazamiento dinámico basado en la escala del eje Y para evitar solapamientos
+    y_min, y_max = ax.get_ylim()
+    y_range = y_max - y_min
+    dynamic_offset = y_range * 0.02  # Usar un 2% del rango del eje Y como desplazamiento
+
+    for p in ax.collections:
+        for offset in p.get_offsets():
+            x, y = offset
+            # Aplicar el desplazamiento dinámico
+            ax.text(x, y + dynamic_offset if y >= 0 else y - dynamic_offset, f'{y:.2f}', ha='center', va='bottom' if y >= 0 else 'top', fontsize=9)
+
+    plt.axhline(0, color='grey', linestyle='--', linewidth=1) # Línea en y=0
+    plt.title(f'Comparación de Coeficientes OLS vs. Lasso para {nombre_materia}', fontsize=16)
+    plt.ylabel('Valor del Coeficiente', fontsize=12)
+    plt.xlabel('Variable Predictora', fontsize=12)
+    plt.xticks(rotation=45, ha='right', fontsize=11)
+    plt.legend(title='Modelo')
+    plt.grid(axis='y', linestyle=':', alpha=0.6)
+    plt.tight_layout()
+    plt.show()
+
+
+
+# --- Comprobación de Multicolinealidad (VIF) ---
+from statsmodels.stats.outliers_influence import variance_inflation_factor
+
+print("\nCalculando el Factor de Inflación de la Varianza (VIF) para las variables predictoras...")
+print("Un VIF alto (generalmente > 10) sugiere multicolinealidad.")
+
+    # El cálculo de VIF puede ser computacionalmente intensivo con muchas variables.
+    # Lo calculamos sobre el DataFrame final antes de la división train/test.
+X_vif = df_modelo_final[predictores_finales]
+    
+    # Añadir una constante para el cálculo de VIF, como en un modelo de regresión
+X_vif_const = sm.add_constant(X_vif)
+
+vif_data = pd.DataFrame()
+vif_data["feature"] = X_vif_const.columns
+vif_data["VIF"] = [variance_inflation_factor(X_vif_const.values, i) for i in range(X_vif_const.shape[1])]
+    
+    # Mostrar las 10 variables con el VIF más alto, excluyendo la constante
+print("\n--- Top 10 Variables con Mayor VIF ---")
+print(vif_data.sort_values('VIF', ascending=False).drop(vif_data[vif_data['feature'] == 'const'].index).head(10))
+print("="*80)
+
+#%% Gráficos de Densidad de Puntajes por Materia
+print("📈 GENERANDO GRÁFICOS DE DENSIDAD DE PUNTAJES")
+print("="*80)
+
+# Diccionario para mapear códigos de país a nombres completos
+nombres_paises = {
+    'ARG': 'Argentina', 'BRA': 'Brasil', 'CHL': 'Chile', 'COL': 'Colombia', 
+    'CRI': 'Costa Rica', 'DOM': 'Rep. Dominicana', 'GTM': 'Guatemala', 
+    'MEX': 'México', 'PAN': 'Panamá', 'PER': 'Perú', 'PRY': 'Paraguay', 
+    'SLV': 'El Salvador', 'URY': 'Uruguay'
+}
+    # 1. Calcular el puntaje promedio por país para la materia actual
+    
+# --- Crear una figura con 3 subplots (uno para cada materia) ---
+# 1 fila, 3 columnas. `sharey=True` hace que todos los gráficos compartan el mismo eje Y para una comparación más fácil.
+fig, axes = plt.subplots(1, 3, figsize=(18, 7), sharey=True)
+fig.suptitle('Distribución de Puntajes por Materia: Mejor vs. Peor País en LATAM', fontsize=20, weight='bold')
+
+# Iterar sobre cada materia y su eje correspondiente en la figura
+for i, (nombre_materia, variable_y) in enumerate(materias.items()):
+
+    puntajes_por_pais = df.groupby('CNT')[variable_y].mean()
+    pais_mejor = puntajes_por_pais.idxmax()
+    puntaje_mejor = puntajes_por_pais.max()
+    pais_peor = puntajes_por_pais.idxmin()
+    puntaje_peor = puntajes_por_pais.min()
+
+    # Obtener los nombres completos para la leyenda
+    nombre_mejor = nombres_paises.get(pais_mejor, pais_mejor)
+    nombre_peor = nombres_paises.get(pais_peor, pais_peor)
+
+    print(f"\nAnálisis para: {nombre_materia}")
+    print(f"  - Mejor país: {nombre_mejor} ({pais_mejor}) - Promedio: {puntaje_mejor:.2f}")
+    print(f"  - Peor país:  {nombre_peor} ({pais_peor}) - Promedio: {puntaje_peor:.2f}")
+
+    # 3. Crear el gráfico de densidad
+    # La clave es pasar el eje `ax=ax` a TODAS las llamadas de sns.kdeplot
+    ax = axes[i]
+    sns.kdeplot(data=df, x=variable_y, label='LATAM (General)', color='gray', linewidth=2, fill=True, alpha=0.1, ax=ax)
+    
+    # Curva de densidad para el país con mejor desempeño
+    sns.kdeplot(data=df[df['CNT'] == pais_mejor], x=variable_y, label=f'Mejor: {nombre_mejor}', color='#C2297A', linewidth=2.5, linestyle='--', ax=ax)
+    
+    # Curva de densidad para el país con peor desempeño
+    # CORRECCIÓN: Se añade `ax=ax` para que se dibuje en el subplot correcto.
+    sns.kdeplot(data=df[df['CNT'] == pais_peor], x=variable_y, label=f'Peor: {nombre_peor}', color='#FAD958', linewidth=2.5, linestyle='--', ax=ax)
+
+    # 4. Añadir detalles y mejorar la estética del gráfico
+    ax.set_title(f'{nombre_materia}', fontsize=16, weight='bold')
+    ax.set_xlabel('Puntaje', fontsize=12)
+    ax.legend().set_visible(False) # Ocultar las leyendas individuales
+    ax.grid(axis='y', linestyle=':', alpha=0.6)
+
+axes[0].set_ylabel('Densidad', fontsize=12) # Poner la etiqueta del eje Y solo en el primer gráfico
+
+# Crear una única leyenda para toda la figura en la parte superior
+handles, labels = axes[0].get_legend_handles_labels()
+fig.legend(handles, labels, loc='lower center', bbox_to_anchor=(0.52, -0.05), ncol=3, fontsize=13)
+
+plt.tight_layout(rect=[0, 0.03, 1, 0.92]) # Ajustar el layout para que el supertítulo y la leyenda no se solapen
+plt.show()
+
+print("\n" + "="*80)
+print("📈 GENERANDO GRÁFICOS DE DENSIDAD DE PUNTAJES")
+print("="*80)
