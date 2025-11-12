@@ -45,6 +45,52 @@ df['puntaje_ciencias'] = df[scie_pv_cols].mean(axis=1)
 print("\nPrimeras 5 filas con el puntaje de ciencias por estudiante:")
 print(df[['CNT', 'puntaje_ciencias', 'puntaje_lengua', 'puntaje_matematica']].head())
 
+#%% Análisis de Puntajes por Nivel Educativo de los Padres (HISCED)
+
+print("\n" + "="*80)
+print("🎓 ANÁLISIS DE PUNTAJES PROMEDIO POR NIVEL EDUCATIVO DE LOS PADRES (HISCED)")
+print("="*80)
+
+# 1. Crear un mapeo para hacer los niveles de HISCED más legibles.
+# Estos niveles se basan en la Clasificación Internacional Normalizada de la Educación (CINE/ISCED).
+# Actualizado según la codificación específica proporcionada.
+hised_map = {
+    1.0: 'CINE < 1 (Sin estudios)',
+    2.0: 'CINE 1 (Primaria)',
+    3.0: 'CINE 2 (Secundaria Baja)',
+    4.0: 'CINE 3 (Sec. Alta Vocacional)',
+    5.0: 'CINE 3 (Sec. Alta General)',
+    6.0: 'CINE 4 (Post-secundaria no terciaria)',
+    7.0: 'CINE 5 (Técnica / Terciaria corta)',
+    8.0: 'CINE 6 (Grado Universitario)',
+    9.0: 'CINE 7 (Maestría o equivalente)',
+    10.0: 'CINE 8 (Doctorado o equivalente)'
+}
+
+# 2. Crear una nueva columna con las etiquetas legibles.
+# Usamos .get() para asignar 'Desconocido' si un valor no está en el mapa.
+df['HISCED_label'] = df['HISCED'].map(hised_map).fillna('Desconocido')
+
+# 3. Agrupar por el nivel educativo y calcular el promedio para cada materia.
+# También contamos el número de estudiantes en cada categoría para dar contexto.
+puntajes_por_hised = df.groupby('HISCED').agg(
+    puntaje_matematica_promedio=('puntaje_matematica', 'mean'),
+    puntaje_lengua_promedio=('puntaje_lengua', 'mean'),
+    puntaje_ciencias_promedio=('puntaje_ciencias', 'mean'),
+    numero_estudiantes=('HISCED', 'size')  # Contar cuántos estudiantes hay en cada grupo
+).round(2)
+
+# 4. Ordenar la tabla según el nivel educativo para una mejor visualización.
+# Creamos una categoría ordenada para que la tabla siga el orden lógico de los niveles educativos.
+orden_niveles = [hised_map[k] for k in sorted(hised_map.keys())] + ['Desconocido']
+puntajes_por_hised = puntajes_por_hised.reindex(orden_niveles, fill_value=0)
+
+# 5. Mostrar la tabla de resultados.
+print("\nA continuación se muestra el puntaje promedio en cada materia, agrupado por el máximo nivel educativo alcanzado por los padres:\n")
+print(puntajes_por_hised.to_string())
+print("\n" + "="*80)
+
+
 #%% Modelo de Regresión OLS con errores clusterizados
 
 import statsmodels.api as sm
@@ -79,8 +125,8 @@ predictores = [
     'MATHEF21', 'FAMCON', 'ANXMAT', 'MATHPERS', 'CREATEFF', 'CREATSCH', 
     'CREATFAM', 'CREATAS', 'CREATOOS', 'CREATOP', 'OPENART', 'IMAGINE', 
     'SCHSUST', 'LEARRES', 'PROBSELF', 'FAMSUPSL', 'FEELLAH', 'SDLEFF', 
-    'MISCED', 'FISCED', 'HISCED', 'PAREDINT', 'BMMJ1', 'BFMJ2', 'HISEI', 
-    'ICTRES', 'HOMEPOS', 'ESCS', 'FCFMLRTY', 'FLSCHOOL', 'FLMULTSB', 
+    'MISCED', 'ICTRES', 'HOMEPOS', 'ESCS','FISCED', 'PAREDINT', 'BMMJ1', 'BFMJ2', 'HISEI', 'HISCED',
+     'FCFMLRTY', 'FLSCHOOL', 'FLMULTSB', 
     'FLFAMILY', 'ACCESSFP', 'FLCONFIN', 'FLCONICT', 'ACCESSFA', 'ATTCONFM', 
     'FRINFLFM', 'ICTSCH', 'ICTAVSCH', 'ICTHOME', 'ICTAVHOM', 'ICTQUAL', 
     'ICTSUBJ', 'ICTENQ', 'ICTFEED', 'ICTOUT', 'ICTWKDY', 'ICTWKEND', 'ICTREG', 
@@ -266,6 +312,9 @@ from sklearn.preprocessing import StandardScaler
 output_excel_path_lasso = 'resultados_lasso_pisa.xlsx'
 writer_lasso = pd.ExcelWriter(output_excel_path_lasso, engine='xlsxwriter')
 
+# Diccionario para guardar los alphas óptimos
+alphas_optimos_lasso = {}
+
 for nombre_materia, variable_y in materias.items():
     print("\n" + "="*80)
     print(f" LASSO REGRESSION CON CROSS-VALIDATION PARA: {nombre_materia.upper()}")
@@ -293,7 +342,10 @@ for nombre_materia, variable_y in materias.items():
     lasso_cv = LassoCV(cv=5, random_state=42, max_iter=10000, n_jobs=-1)
     lasso_cv.fit(X_train_scaled, y_train)
 
-    print(f"Alpha óptimo encontrado: {lasso_cv.alpha_:.6f}")
+    # Guardar y mostrar el alpha óptimo
+    alpha_optimo = lasso_cv.alpha_
+    alphas_optimos_lasso[nombre_materia] = alpha_optimo
+    print(f"Alpha óptimo encontrado: {alpha_optimo:.6f}")
 
     # 5. Evaluar el modelo final en el conjunto de prueba
     y_pred = lasso_cv.predict(X_test_scaled)
@@ -316,6 +368,14 @@ for nombre_materia, variable_y in materias.items():
 # Guardar y cerrar el archivo de Excel de Lasso
 writer_lasso.close()
 print(f"\n🎉 ¡Análisis Lasso completado! Todos los resultados han sido guardados en '{output_excel_path_lasso}'")
+
+# Imprimir un resumen de los alphas óptimos encontrados
+print("\n" + "="*80)
+print("SUMMARY DE HIPERPARÁMETROS ÓPTIMOS (Lasso)")
+print("="*80)
+for materia, alpha in alphas_optimos_lasso.items():
+    print(f"  - {materia}: Alpha óptimo = {alpha:.6f}")
+print("="*80)
 
 #%% Modelo Ridge con Cross-Validation
 
@@ -440,6 +500,94 @@ for nombre_materia, variable_y in materias.items():
 # Guardar y cerrar el archivo de Excel de Elastic Net
 writer_elasticnet.close()
 print(f"\n🎉 ¡Análisis Elastic Net completado! Todos los resultados han sido guardados en '{output_excel_path_elasticnet}'")
+
+#%% Modelo de Regresión por Pasos (Stepwise)
+
+def stepwise_selection(X, y, 
+                       initial_list=[], 
+                       threshold_in=0.01, 
+                       threshold_out=0.05, 
+                       verbose=True):
+    """ 
+    Realiza una selección de características por pasos (bidireccional).
+
+    Parámetros:
+        X (DataFrame): Variables predictoras.
+        y (Series): Variable dependiente.
+        initial_list (list): Lista inicial de predictores para forzar en el modelo.
+        threshold_in (float): P-value para que una variable entre en el modelo.
+        threshold_out (float): P-value para que una variable salga del modelo.
+        verbose (bool): Si es True, imprime el proceso en cada iteración.
+
+    Retorna:
+        list: Lista final de las mejores variables predictoras.
+    """
+    included = list(initial_list)
+    while True:
+        changed = False
+        # --- Paso hacia adelante (Forward step) ---
+        excluded = list(set(X.columns) - set(included))
+        new_pval = pd.Series(index=excluded, dtype='float64')
+        for new_column in excluded:
+            model = sm.OLS(y, sm.add_constant(pd.DataFrame(X[included + [new_column]]))).fit()
+            new_pval[new_column] = model.pvalues[new_column]
+        
+        best_pval = new_pval.min()
+        if best_pval < threshold_in:
+            best_feature = new_pval.idxmin()
+            included.append(best_feature)
+            changed = True
+            if verbose:
+                print(f'Añadida: {best_feature} con p-value {best_pval:.6f}')
+
+        # --- Paso hacia atrás (Backward step) ---
+        model = sm.OLS(y, sm.add_constant(pd.DataFrame(X[included]))).fit()
+        # Usar Series para evitar el error si included está vacío
+        pvalues = model.pvalues.iloc[1:]
+        worst_pval = pvalues.max() # El p-value más alto entre los predictores actuales
+        if worst_pval > threshold_out:
+            worst_feature = pvalues.idxmax()
+            included.remove(worst_feature)
+            changed = True
+            if verbose:
+                print(f'Eliminada: {worst_feature} con p-value {worst_pval:.6f}')
+        
+        if not changed:
+            break
+            
+    return included
+
+# Crear un nuevo ExcelWriter para los resultados de Stepwise
+output_excel_path_stepwise = 'resultados_stepwise_pisa.xlsx'
+writer_stepwise = pd.ExcelWriter(output_excel_path_stepwise, engine='xlsxwriter')
+
+for nombre_materia, variable_y in materias.items():
+    print("\n" + "="*80)
+    print(f"🔍 EJECUTANDO REGRESIÓN STEPWISE PARA: {nombre_materia.upper()}")
+    print("="*80)
+
+    # 1. Preparar los datos (sin dividir, usamos todos los datos para la selección)
+    df_modelo_final, predictores_finales = prepare_data_for_model(df, predictores_filtrados, predictores_dummies, variable_y)
+    y = df_modelo_final[variable_y]
+    X = df_modelo_final[predictores_finales]
+
+    # 2. Ejecutar la selección de variables
+    print("\nIniciando selección de variables por pasos...")
+    best_predictors = stepwise_selection(X, y)
+    print("\nSelección de variables completada.")
+    print(f"Número de variables seleccionadas: {len(best_predictors)}")
+
+    # 3. Ajustar y guardar el modelo final con las variables seleccionadas
+    X_final = sm.add_constant(X[best_predictors])
+    modelo_final = sm.OLS(y, X_final).fit(cov_type='HC1')
+    
+    resumen_df = pd.read_html(modelo_final.summary().tables[1].as_html(), header=0, index_col=0)[0]
+    resumen_df.to_excel(writer_stepwise, sheet_name=f'Resultados_{nombre_materia}')
+    print(f"✅ Resultados de Stepwise para {nombre_materia} guardados en la hoja '{nombre_materia}' del archivo '{output_excel_path_stepwise}'\n")
+
+# Guardar y cerrar el archivo de Excel de Stepwise
+writer_stepwise.close()
+print(f"\n🎉 ¡Análisis Stepwise completado! Todos los resultados han sido guardados en '{output_excel_path_stepwise}'")
 
 #%% Heatmap de Correlaciones de Variables Numéricas
 
@@ -601,6 +749,10 @@ print("\n" + "="*80)
 print("📊 GENERANDO TABLAS COMPARATIVAS OLS vs. LASSO")
 print("="*80)
 
+# Crear un ExcelWriter para guardar las tablas comparativas
+output_excel_path_comparativo = 'resultados_comparacion_ols_lasso.xlsx'
+writer_comparativo = pd.ExcelWriter(output_excel_path_comparativo, engine='xlsxwriter')
+
 # Diccionario para almacenar las tablas finales en el environment
 tablas_comparativas = {}
 
@@ -635,24 +787,34 @@ for nombre_materia, variable_y in materias.items():
 
     # 5. Fusionar y mostrar resultados
     df_comparativo = resumen_ols.join(coefs_lasso).round(4)
+
+    # 6. Añadir la columna con la diferencia
+    df_comparativo['diferencia'] = (df_comparativo['coef_ols'] - df_comparativo['coef_lasso']).round(4)
+
+    # Guardar la tabla en el diccionario
     tablas_comparativas[nombre_materia] = df_comparativo
 
     print(f"\n--- Tabla Comparativa de Coeficientes: {nombre_materia} ---")
     print(df_comparativo.to_string())
     print("="*80 + "\n")
 
+    # Escribir el DataFrame en una hoja de Excel específica para la materia
+    df_comparativo.to_excel(writer_comparativo, sheet_name=f'Comp_{nombre_materia}')
+    print(f"✅ Tabla comparativa para {nombre_materia} guardada en la hoja 'Comp_{nombre_materia}' del archivo '{output_excel_path_comparativo}'")
+
+# Guardar y cerrar el archivo de Excel
+writer_comparativo.close()
+
 print("\n🎉 ¡Análisis comparativo completado!")
 print("Las tablas están disponibles en el diccionario 'tablas_comparativas'.")
-
-
-#%% Gráficos comparativos de coeficientes OLS vs. Lasso
+print(f"Además, los resultados han sido exportados a '{output_excel_path_comparativo}'")
 
 print("\n" + "="*80)
 print("📈 GENERANDO GRÁFICOS COMPARATIVOS DE COEFICIENTES")
 print("="*80)
 
 # Corregí un pequeño error en la lista (faltaba una coma entre CREATAS y GROSAGR)
-top_coefs = ['MATHEFF', 'ST004D01T_2', 'HISCED', 'EXERPRAC', 'WORKPAY', 
+top_coefs = ['MATHEFF', 'ST004D01T_2', 'EXERPRAC', 'WORKPAY', 
              'FAMCON', 'BMMJ1', 'REPEAT', 'CREATAS', 'GROSAGR']
 
 # Crear un diccionario para mapear los nombres de las variables a etiquetas más claras
@@ -692,31 +854,38 @@ for nombre_materia, variable_y in materias.items():
 
     # 4. Crear el gráfico
     plt.figure(figsize=(14, 8))
-    # Ajuste: Usamos dodge=True para separar por modelo, pero quitamos el jitter
-    # para que los puntos queden perfectamente alineados en dos columnas.
     ax = sns.stripplot(data=df_plot_long, x='variable', y='coeficiente', hue='modelo',
-                       palette={'coef_ols': 'blue', 'coef_lasso': 'red'},
-                       dodge=True, jitter=False, size=12, alpha=0.8)
+                       palette={'coef_ols': '#E65747', 'coef_lasso': '#642C80'},
+                       jitter=False, size=12, alpha=0.9) # Eliminamos dodge=True
     
-    # 5. Añadir el valor de los coeficientes sobre cada punto
-    # 5. Añadir el valor de los coeficientes sobre cada punto con desplazamiento dinámico
-    # Calcular un desplazamiento dinámico basado en la escala del eje Y para evitar solapamientos
+    # 5. Conectar los puntos y añadir etiquetas
+    # Iteramos sobre las posiciones de las variables en el eje x (0, 1, 2, ...)
+    for i, variable_label in enumerate(ax.get_xticklabels()):
+        variable_name = variable_label.get_text()
+        
+        # Obtener los coeficientes para la variable actual
+        coef_ols = df_plot_long[(df_plot_long['variable'] == variable_name) & (df_plot_long['modelo'] == 'coef_ols')]['coeficiente'].iloc[0]
+        coef_lasso = df_plot_long[(df_plot_long['variable'] == variable_name) & (df_plot_long['modelo'] == 'coef_lasso')]['coeficiente'].iloc[0]
+        
+        # Dibujar una línea vertical entre los puntos
+        ax.plot([i, i], [coef_ols, coef_lasso], color='grey', linestyle='-', linewidth=1.5, zorder=0)
+
+    # 6. Añadir el valor de los coeficientes sobre cada punto
     y_min, y_max = ax.get_ylim()
     y_range = y_max - y_min
-    dynamic_offset = y_range * 0.02  # Usar un 2% del rango del eje Y como desplazamiento
+    dynamic_offset = y_range * 0.02
 
     for p in ax.collections:
         for offset in p.get_offsets():
             x, y = offset
-            # Aplicar el desplazamiento dinámico
             ax.text(x, y + dynamic_offset if y >= 0 else y - dynamic_offset, f'{y:.2f}', ha='center', va='bottom' if y >= 0 else 'top', fontsize=9)
 
     plt.axhline(0, color='grey', linestyle='--', linewidth=1) # Línea en y=0
     plt.title(f'Comparación de Coeficientes OLS vs. Lasso para {nombre_materia}', fontsize=16)
     plt.ylabel('Valor del Coeficiente', fontsize=12)
-    plt.xlabel('Variable Predictora', fontsize=12)
-    plt.xticks(rotation=45, ha='right', fontsize=11)
-    plt.legend(title='Modelo')
+    plt.xlabel('', fontsize=12)
+    plt.xticks(rotation=15, ha='right', fontsize=11)
+    plt.legend(title='Modelo',fontsize = 16)
     plt.grid(axis='y', linestyle=':', alpha=0.6)
     plt.tight_layout()
     plt.show()

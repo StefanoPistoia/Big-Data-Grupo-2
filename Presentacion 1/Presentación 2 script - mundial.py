@@ -220,68 +220,40 @@ for nombre_materia, variable_y in materias.items():
 writer.close()
 print(f"\n🎉 ¡Análisis completado! Todos los resultados han sido guardados en '{output_excel_path}'")
 
-#%% Modelo Random Forest con Fine-Tuning y Validación Cruzada
+#%% Modelo Random Forest con evaluación OOB
 
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.model_selection import RandomizedSearchCV
 from sklearn.metrics import mean_squared_error, r2_score
 import numpy as np
 
 for nombre_materia, variable_y in materias.items():
     print("\n" + "="*80)
-    print(f"🌳 EJECUTANDO RANDOM FOREST CON HYPERPARAMETER TUNING PARA: {nombre_materia.upper()}")
+    print(f"🌳 EJECUTANDO RANDOM FOREST PARA: {nombre_materia.upper()}")
     print("="*80)
 
     # 1. Preparar los datos usando la función refactorizada
     df_modelo_final, predictores_finales = prepare_data_for_model(df, predictores_filtrados, predictores_dummies, variable_y)
 
-    print(f"\nSe usarán {len(df_modelo_final)} observaciones completas para el modelo.")
+    print(f"\nSe usarán {len(df_modelo_final)} observaciones completas para el modelo de Random Forest.")
 
     y = df_modelo_final[variable_y]
     X = df_modelo_final[predictores_finales]
 
-    # 2. División de datos en Entrenamiento+Validación (80%) y Prueba (20%)
-    X_dev, X_test, y_dev, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    # 2. División de datos en Entrenamiento (80%) y Prueba (20%)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
     
-    print(f"Tamaño del conjunto de Desarrollo (Entrenamiento + Validación): {len(X_dev)} ({len(X_dev)/len(X)*100:.1f}%)")
-    print(f"Tamaño del conjunto de Prueba Final: {len(X_test)} ({len(X_test)/len(X)*100:.1f}%)")
+    print(f"Tamaño del conjunto de Entrenamiento: {len(X_train)} ({len(X_train)/len(X)*100:.1f}%)")
+    print(f"Tamaño del conjunto de Prueba: {len(X_test)} ({len(X_test)/len(X)*100:.1f}%)")
 
-    # 3. Definir el espacio de hiperparámetros para RandomizedSearchCV
-    param_dist = {
-        'n_estimators': [100, 200, 300],
-        'max_features': ['sqrt', 'log2', 1.0],
-        'max_depth': [None, 10, 20, 30],
-        'min_samples_split': [2, 5, 10],
-        'min_samples_leaf': [1, 2, 4],
-        'bootstrap': [True] # OOB score solo está disponible si bootstrap=True
-    }
+    # 3. Configurar y entrenar el modelo Random Forest
+    # oob_score=True calcula el score en las muestras "Out-of-Bag", una buena estimación del rendimiento.
+    # n_jobs=-1 usa todos los procesadores para acelerar el entrenamiento.
+    print("\nEntrenando el modelo Random Forest...")
+    rf_model = RandomForestRegressor(n_estimators=200, random_state=42, oob_score=True, n_jobs=-1, max_features='sqrt', min_samples_leaf=4)
+    rf_model.fit(X_train, y_train)
 
-    # 4. Configurar y ejecutar la búsqueda aleatoria con validación cruzada (k-validation)
-    rf = RandomForestRegressor(random_state=42, oob_score=True)
-    
-    # n_iter controla cuántas combinaciones de parámetros se prueban.
-    # cv=3 significa 3-fold cross-validation.
-    # n_jobs=-1 usa todos los procesadores disponibles.
-    random_search = RandomizedSearchCV(
-        estimator=rf, 
-        param_distributions=param_dist, 
-        n_iter=10, # Probar 10 combinaciones. Aumentar para una búsqueda más exhaustiva.
-        cv=5, 
-        verbose=2, 
-        random_state=42, 
-        n_jobs=-1,
-        scoring='neg_root_mean_squared_error' # Métrica para optimizar
-    )
-
-    print("\nIniciando búsqueda de hiperparámetros con RandomizedSearchCV...")
-    random_search.fit(X_dev, y_dev)
-
-    print("\n--- Mejores Hiperparámetros Encontrados ---")
-    print(random_search.best_params_)
-
-    # 5. Evaluar el mejor modelo en el conjunto de prueba final
-    best_rf = random_search.best_estimator_
-    y_pred_final = best_rf.predict(X_test)
+    # 4. Evaluar el modelo en el conjunto de prueba
+    y_pred_final = rf_model.predict(X_test)
 
     rmse_final = np.sqrt(mean_squared_error(y_test, y_pred_final))
     r2_final = r2_score(y_test, y_pred_final)
@@ -289,7 +261,7 @@ for nombre_materia, variable_y in materias.items():
     print("\n--- Resultados de la Evaluación Final en el Conjunto de Prueba (20%) ---")
     print(f"Raíz del Error Cuadrático Medio (RMSE): {rmse_final:.4f}")
     print(f"Coeficiente de Determinación (R²): {r2_final:.4f}")
-    print(f"Out-of-Bag (OOB) Score del mejor modelo (entrenado en 80%): {best_rf.oob_score_:.4f}")
+    print(f"Out-of-Bag (OOB) Score (R² estimado sobre datos no vistos durante el entrenamiento): {rf_model.oob_score_:.4f}")
     print("="*80 + "\n")
 
 #%% Modelo Lasso con Cross-Validation
