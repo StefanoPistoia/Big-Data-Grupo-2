@@ -979,3 +979,134 @@ plt.show()
 print("\n" + "="*80)
 print("📈 GENERANDO GRÁFICOS DE DENSIDAD DE PUNTAJES")
 print("="*80)
+#%%
+print("\n" + "="*80)
+print("📈 GENERANDO GRÁFICOS DE DENSIDAD DE PUNTAJES")
+print("="*80)
+
+#%% Test de Hausman para Efectos Fijos vs. Aleatorios
+
+import statsmodels.formula.api as smf
+from statsmodels.stats.api import het_breuschpagan
+import pandas as pd
+import numpy as np
+
+def hausman_test(fe_model, re_model):
+    """
+    Realiza el test de Hausman para comparar modelos de efectos fijos y aleatorios.
+    H0: El modelo de efectos aleatorios es el preferido.
+    H1: El modelo de efectos fijos es el preferido.
+    """
+    # Extraer coeficientes y matrices de covarianza
+    b_fe = fe_model.params
+    b_re = re_model.params
+    cov_fe = fe_model.cov_params()
+    cov_re = re_model.cov_params()
+    
+    # Alineamos los coeficientes para asegurarnos de que estamos comparando los mismos
+    common_params = list(set(b_fe.index) & set(b_re.index))
+    b_fe = b_fe[common_params]
+    b_re = b_re[common_params]
+    
+    # La matriz de covarianza para el test de Hausman es la diferencia de las matrices de los estimadores
+    # Aseguramos que las matrices están alineadas
+    cov_fe = cov_fe.loc[common_params, common_params]
+    cov_re = cov_re.loc[common_params, common_params]
+    
+    # Calculamos la diferencia de coeficientes y la diferencia de las matrices de covarianza
+    b_diff = b_fe - b_re
+    cov_diff = cov_re - cov_fe
+    
+    # Calculamos el estadístico de Hausman
+    # H = (b_fe - b_re)' * [Var(b_fe) - Var(b_re)]^(-1) * (b_fe - b_re)
+    try:
+        # Usamos la inversa generalizada (pinv) para mayor estabilidad numérica
+        inv_cov_diff = np.linalg.pinv(cov_diff)
+        hausman_stat = b_diff.dot(inv_cov_diff).dot(b_diff)
+    except np.linalg.LinAlgError:
+        return np.nan, np.nan, "Error: La matriz de covarianzas no es invertible."
+
+    # Los grados de libertad son el número de coeficientes que se comparan
+    df = len(b_diff)
+    
+    # El p-value se obtiene de la distribución Chi-cuadrado
+    from scipy.stats import chi2
+    p_value = 1 - chi2.cdf(hausman_stat, df)
+    
+    return hausman_stat, p_value, f"Comparando {df} coeficientes."
+
+# --- Preparación de datos para modelos de panel ---
+# Usamos la misma lógica de filtrado de predictores que antes
+predictores_panel = [p for p in predictores if p not in columnas_a_eliminar and p not in afuera]
+
+# Crear un ExcelWriter para guardar los resultados del test
+output_excel_path_hausman = 'resultados_hausman_pisa.xlsx'
+writer_hausman = pd.ExcelWriter(output_excel_path_hausman, engine='xlsxwriter')
+
+for nombre_materia, variable_y in materias.items():
+    print("\n" + "="*80)
+    print(f"🏠 EJECUTANDO TEST DE HAUSMAN PARA: {nombre_materia.upper()}")
+    print("="*80)
+
+    # 1. Preparar los datos
+    # Seleccionamos las columnas necesarias y eliminamos filas con NaNs para asegurar consistencia
+    columnas_panel = predictores_panel + [variable_y]
+    df_panel = df[columnas_panel].copy()
+
+    # Convertir todas las columnas predictoras a numérico
+    for col in predictores_panel:
+        if col != 'CNT': # CNT es el identificador de grupo
+            df_panel[col] = pd.to_numeric(df_panel[col], errors='coerce')
+
+    df_panel.dropna(inplace=True)
+    print(f"Se usarán {len(df_panel)} observaciones completas para los modelos de panel.")
+
+    # 2. Crear la fórmula para los modelos
+    # Excluimos 'CNT' de los predictores ya que se usa para agrupar
+    formula_predictores = ' + '.join([p for p in predictores_panel if p != 'CNT'])
+    formula = f"{variable_y} ~ {formula_predictores}"
+
+    # 3. Ajustar el Modelo de Efectos Aleatorios (RE)
+    print("\nAjustando modelo de Efectos Aleatorios (RE)...")
+    re_model = smf.mixedlm(formula, df_panel, groups=df_panel["CNT"]).fit()
+
+    # 4. Ajustar el Modelo de Efectos Fijos (FE)
+    # En `statsmodels`, un modelo FE se puede estimar con OLS y variables dummy
+    # o usando `PanelOLS` de la librería `linearmels`. Aquí usamos una fórmula con C(CNT)
+    # que es equivalente a crear dummies y es más directo para la comparación.
+    print("Ajustando modelo de Efectos Fijos (FE)...")
+    fe_model = smf.ols(f"{formula} + C(CNT)", data=df_panel).fit()
+
+    # 5. Realizar el Test de Hausman
+    print("Realizando Test de Hausman...")
+    hausman_stat, p_value, comment = hausman_test(fe_model, re_model)
+    
+    # 6. Mostrar y guardar los resultados
+    print("\n--- Resultados del Test de Hausman ---")
+    print(f"Materia: {nombre_materia}")
+    print(f"Estadístico Chi-cuadrado: {hausman_stat:.4f}")
+    print(f"P-value: {p_value:.4f}")
+    print(f"Comentario: {comment}")
+
+    if p_value < 0.05:
+        print("\nConclusión: Se rechaza la hipótesis nula (p < 0.05).")
+        print("El modelo de Efectos Fijos (FE) es más apropiado que el de Efectos Aleatorios (RE).")
+        print("Esto sugiere que hay factores no observados a nivel de país que están correlacionados con tus predictores.")
+    else:
+        print("\nConclusión: No se puede rechazar la hipótesis nula (p >= 0.05).")
+        print("El modelo de Efectos Aleatorios (RE) podría ser más eficiente.")
+
+    # Guardar en Excel
+    resultados_df = pd.DataFrame({
+        'Estadístico Chi-cuadrado': [hausman_stat],
+        'Grados de Libertad': [len(re_model.params)],
+        'P-value': [p_value]
+    }, index=[nombre_materia])
+    
+    resultados_df.to_excel(writer_hausman, sheet_name=f'Hausman_{nombre_materia}')
+    print(f"\n✅ Resultados del test para {nombre_materia} guardados en '{output_excel_path_hausman}'")
+    print("="*80)
+
+# Guardar y cerrar el archivo de Excel
+writer_hausman.close()
+print(f"\n🎉 ¡Análisis de Hausman completado! Todos los resultados han sido guardados en '{output_excel_path_hausman}'")
