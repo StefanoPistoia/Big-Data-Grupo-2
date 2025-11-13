@@ -450,7 +450,7 @@ for nombre_materia, variable_y in materias.items():
 
     # 4. Ajustar el modelo RidgeCV para encontrar el alpha óptimo
     print("\nBuscando el alpha óptimo con RidgeCV (5-fold cross-validation)...")
-    ridge_cv = RidgeCV(alphas=alphas_ridge, store_cv_values=True, scoring='neg_root_mean_squared_error')
+    ridge_cv = RidgeCV(alphas=alphas_ridge, store_cv_results=True, scoring='neg_root_mean_squared_error')
     ridge_cv.fit(X_train_scaled, y_train)
 
     print(f"Alpha óptimo encontrado: {ridge_cv.alpha_:.6f}")
