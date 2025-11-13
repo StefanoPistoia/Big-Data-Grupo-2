@@ -906,6 +906,14 @@ for nombre_materia, variable_y in materias.items():
     
     # Aplicar el mapeo para usar las nuevas etiquetas
     df_plot_long['variable'] = df_plot_long['variable'].map(label_map)
+    
+    # Ordenar las variables según el coeficiente LASSO (de menor a mayor)
+    orden_lasso = (
+    df_plot_long[df_plot_long['modelo'] == 'coef_lasso']
+    .sort_values('coeficiente', ascending=True)['variable']
+    )
+    df_plot_long['variable'] = pd.Categorical(df_plot_long['variable'], categories=orden_lasso, ordered=True)
+
 
     # 4. Crear el gráfico (formato 16:9, ideal para presentación)
     plt.figure(figsize=(14, 8))
@@ -926,22 +934,46 @@ for nombre_materia, variable_y in materias.items():
         ]['coeficiente'].iloc[0]
         ax.plot([i, i], [coef_ols, coef_lasso], color='grey', linestyle='-', linewidth=2, zorder=0)
 
-    # 6. Añadir el valor de los coeficientes sobre cada punto
+    # 6. Añadir el valor de los coeficientes sobre cada punto, evitando superposición
     y_min, y_max = ax.get_ylim()
     y_range = y_max - y_min
     dynamic_offset = y_range * 0.02
 
+    # Calcular diferencias absolutas entre OLS y LASSO
+    diffs = {
+        var: abs(
+            df_plot_long.query("variable == @var and modelo == 'coef_ols'")['coeficiente'].iloc[0] -
+            df_plot_long.query("variable == @var and modelo == 'coef_lasso'")['coeficiente'].iloc[0]
+        )
+        for var in df_plot_long['variable'].unique()
+    }
+
     for p in ax.collections:
         for offset in p.get_offsets():
             x, y = offset
-            ax.text(
-                x, 
-                y + dynamic_offset if y >= 0 else y - dynamic_offset, 
-                f'{y:.2f}', 
-                ha='center', 
-                va='bottom' if y >= 0 else 'top', 
-                fontsize=13, fontweight='bold'
-            )
+            variable_idx = round(x)
+            variable_name = ax.get_xticklabels()[variable_idx].get_text()
+
+            # Identificar si el punto corresponde a LASSO u OLS
+            modelo = 'coef_lasso' if abs(
+                y - df_plot_long.query(
+                    "variable == @variable_name and modelo == 'coef_lasso'"
+                )['coeficiente'].iloc[0]
+            ) < 1e-6 else 'coef_ols'
+
+            # Mostrar siempre si diferencia ≥ 1, o solo si es LASSO cuando diferencia < 1
+            if diffs.get(variable_name, 0) >= 1 or modelo == 'coef_lasso':
+                ax.text(
+                    x,
+                    y + dynamic_offset if y >= 0 else y - dynamic_offset,
+                    f'{y:.2f}',
+                    ha='center',
+                    va='bottom' if y >= 0 else 'top',
+                    fontsize=13,
+                    fontweight='bold'
+                )
+
+
 
     # 7. Ajustes de ejes y título
     plt.axhline(0, color='grey', linestyle='--', linewidth=1.5)
@@ -968,6 +1000,8 @@ for nombre_materia, variable_y in materias.items():
     for spine in plt.gca().spines.values():
         spine.set_linewidth(1.5)
 
+    ax.set_ylim(-25, 25)
+    
     plt.tight_layout()
     plt.show()
 
