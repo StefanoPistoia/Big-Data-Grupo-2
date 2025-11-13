@@ -355,6 +355,44 @@ for nombre_materia, variable_y in materias.items():
     print("\n--- Evaluación en el Conjunto de Prueba (20%) ---")
     print(f"R-cuadrado (R²): {r2:.4f}")
     print(f"Raíz del Error Cuadrático Medio (RMSE): {rmse:.4f}")
+    
+        # Calcular el MSE promedio para cada alpha
+    mses = np.mean(lasso_cv.mse_path_, axis=1)
+
+    # Crear el gráfico
+    plt.figure(figsize=(8, 8))  # Cuadrado y suficientemente grande
+    plt.plot(lasso_cv.alphas_, mses, marker='o', linestyle='-', color='#642C80', 
+             markersize=6, linewidth=2)
+    plt.axvline(lasso_cv.alpha_, linestyle='--', color='#E65747', linewidth=2, 
+                label=f'Alpha óptimo = {lasso_cv.alpha_:.4f}')
+
+    # Escala y etiquetas
+    plt.xscale('log')
+    plt.xlabel('Alpha (escala logarítmica)', fontsize=18, labelpad=12, fontweight='bold')
+    plt.ylabel('Error Cuadrático Medio (MSE) promedio', fontsize=18, labelpad=12, fontweight='bold')
+    plt.title(f'Selección de Alpha para Lasso - {nombre_materia}', fontsize=22, weight='bold', pad=20)
+
+    # Leyenda clara
+    plt.legend(fontsize=16, loc='best', frameon=True, fancybox=True, shadow=True)
+
+    # Ejes y ticks más grandes
+    plt.xticks(fontsize=14, fontweight='bold')
+    plt.yticks(fontsize=14, fontweight='bold')
+
+    # Cuadrícula visible
+    plt.grid(True, which="both", ls="--", lw=1, alpha=0.7)
+
+    # Fondo blanco y bordes nítidos
+    plt.gca().set_facecolor('white')
+    for spine in plt.gca().spines.values():
+        spine.set_linewidth(1.5)
+
+    # Invertir eje X
+    plt.gca().invert_xaxis()
+
+    plt.tight_layout()
+    plt.show()
+
 
     # 6. Guardar los coeficientes en Excel
     coefs = pd.Series(lasso_cv.coef_, index=X.columns)
@@ -566,21 +604,38 @@ for nombre_materia, variable_y in materias.items():
     print(f"🔍 EJECUTANDO REGRESIÓN STEPWISE PARA: {nombre_materia.upper()}")
     print("="*80)
 
-    # 1. Preparar los datos (sin dividir, usamos todos los datos para la selección)
+    # 1. Preparar los datos
     df_modelo_final, predictores_finales = prepare_data_for_model(df, predictores_filtrados, predictores_dummies, variable_y)
     y = df_modelo_final[variable_y]
     X = df_modelo_final[predictores_finales]
 
-    # 2. Ejecutar la selección de variables
+    # 2. Dividir los datos en entrenamiento y prueba
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    print(f"Se usarán {len(X_train)} observaciones para la selección de variables y entrenamiento.")
+    print(f"Se usarán {len(X_test)} observaciones para la evaluación final.")
+
+    # 3. Ejecutar la selección de variables usando SOLO el conjunto de entrenamiento
     print("\nIniciando selección de variables por pasos...")
-    best_predictors = stepwise_selection(X, y)
+    best_predictors = stepwise_selection(X_train, y_train, verbose=False) # verbose=False para una salida más limpia
     print("\nSelección de variables completada.")
     print(f"Número de variables seleccionadas: {len(best_predictors)}")
 
-    # 3. Ajustar y guardar el modelo final con las variables seleccionadas
-    X_final = sm.add_constant(X[best_predictors])
-    modelo_final = sm.OLS(y, X_final).fit(cov_type='HC1')
+    # 4. Ajustar el modelo final con las variables seleccionadas en el conjunto de entrenamiento
+    X_train_final = sm.add_constant(X_train[best_predictors])
+    modelo_final = sm.OLS(y_train, X_train_final).fit(cov_type='HC1')
     
+    # 5. Evaluar el modelo en el conjunto de prueba
+    X_test_final = sm.add_constant(X_test[best_predictors])
+    y_pred = modelo_final.predict(X_test_final)
+    
+    r2 = r2_score(y_test, y_pred)
+    rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+
+    print("\n--- Evaluación en el Conjunto de Prueba (20%) ---")
+    print(f"R-cuadrado (R²): {r2:.4f}")
+    print(f"Raíz del Error Cuadrático Medio (RMSE): {rmse:.4f}")
+
+    # 6. Guardar el resumen del modelo (ajustado sobre datos de entrenamiento) en Excel
     resumen_df = pd.read_html(modelo_final.summary().tables[1].as_html(), header=0, index_col=0)[0]
     resumen_df.to_excel(writer_stepwise, sheet_name=f'Resultados_{nombre_materia}')
     print(f"✅ Resultados de Stepwise para {nombre_materia} guardados en la hoja '{nombre_materia}' del archivo '{output_excel_path_stepwise}'\n")
@@ -852,23 +907,24 @@ for nombre_materia, variable_y in materias.items():
     # Aplicar el mapeo para usar las nuevas etiquetas
     df_plot_long['variable'] = df_plot_long['variable'].map(label_map)
 
-    # 4. Crear el gráfico
+    # 4. Crear el gráfico (formato 16:9, ideal para presentación)
     plt.figure(figsize=(14, 8))
-    ax = sns.stripplot(data=df_plot_long, x='variable', y='coeficiente', hue='modelo',
-                       palette={'coef_ols': '#E65747', 'coef_lasso': '#642C80'},
-                       jitter=False, size=12, alpha=0.9) # Eliminamos dodge=True
-    
+    ax = sns.stripplot(
+        data=df_plot_long, x='variable', y='coeficiente', hue='modelo',
+        palette={'coef_ols': '#E65747', 'coef_lasso': '#642C80'},
+        jitter=False, size=12, alpha=0.9
+    )
+
     # 5. Conectar los puntos y añadir etiquetas
-    # Iteramos sobre las posiciones de las variables en el eje x (0, 1, 2, ...)
     for i, variable_label in enumerate(ax.get_xticklabels()):
         variable_name = variable_label.get_text()
-        
-        # Obtener los coeficientes para la variable actual
-        coef_ols = df_plot_long[(df_plot_long['variable'] == variable_name) & (df_plot_long['modelo'] == 'coef_ols')]['coeficiente'].iloc[0]
-        coef_lasso = df_plot_long[(df_plot_long['variable'] == variable_name) & (df_plot_long['modelo'] == 'coef_lasso')]['coeficiente'].iloc[0]
-        
-        # Dibujar una línea vertical entre los puntos
-        ax.plot([i, i], [coef_ols, coef_lasso], color='grey', linestyle='-', linewidth=1.5, zorder=0)
+        coef_ols = df_plot_long[
+            (df_plot_long['variable'] == variable_name) & (df_plot_long['modelo'] == 'coef_ols')
+        ]['coeficiente'].iloc[0]
+        coef_lasso = df_plot_long[
+            (df_plot_long['variable'] == variable_name) & (df_plot_long['modelo'] == 'coef_lasso')
+        ]['coeficiente'].iloc[0]
+        ax.plot([i, i], [coef_ols, coef_lasso], color='grey', linestyle='-', linewidth=2, zorder=0)
 
     # 6. Añadir el valor de los coeficientes sobre cada punto
     y_min, y_max = ax.get_ylim()
@@ -878,15 +934,40 @@ for nombre_materia, variable_y in materias.items():
     for p in ax.collections:
         for offset in p.get_offsets():
             x, y = offset
-            ax.text(x, y + dynamic_offset if y >= 0 else y - dynamic_offset, f'{y:.2f}', ha='center', va='bottom' if y >= 0 else 'top', fontsize=9)
+            ax.text(
+                x, 
+                y + dynamic_offset if y >= 0 else y - dynamic_offset, 
+                f'{y:.2f}', 
+                ha='center', 
+                va='bottom' if y >= 0 else 'top', 
+                fontsize=13, fontweight='bold'
+            )
 
-    plt.axhline(0, color='grey', linestyle='--', linewidth=1) # Línea en y=0
-    plt.title(f'Comparación de Coeficientes OLS vs. Lasso para {nombre_materia}', fontsize=16)
-    plt.ylabel('Valor del Coeficiente', fontsize=12)
-    plt.xlabel('', fontsize=12)
-    plt.xticks(rotation=15, ha='right', fontsize=11)
-    plt.legend(title='Modelo',fontsize = 16)
-    plt.grid(axis='y', linestyle=':', alpha=0.6)
+    # 7. Ajustes de ejes y título
+    plt.axhline(0, color='grey', linestyle='--', linewidth=1.5)
+    plt.title(
+        f'Comparación de Coeficientes OLS vs. Lasso - {nombre_materia}',
+        fontsize=22, weight='bold', pad=20
+    )
+    plt.ylabel('Valor del Coeficiente', fontsize=18, fontweight='bold', labelpad=12)
+    plt.xlabel('', fontsize=18)
+    plt.xticks(rotation=15, ha='right', fontsize=14, fontweight='bold')
+    plt.yticks(fontsize=14, fontweight='bold')
+    
+    # Leyenda destacada
+    plt.legend(
+        title='Modelo', title_fontsize=16, fontsize=14,
+        frameon=True, fancybox=True, shadow=True
+    )
+    
+    # Cuadrícula clara
+    plt.grid(axis='y', linestyle=':', alpha=0.7, linewidth=1)
+
+    # Fondo blanco y bordes visibles
+    plt.gca().set_facecolor('white')
+    for spine in plt.gca().spines.values():
+        spine.set_linewidth(1.5)
+
     plt.tight_layout()
     plt.show()
 
